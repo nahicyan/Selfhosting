@@ -48,6 +48,7 @@ BACKUP_DIR="/root/firewall-backups"
 CONFIG_FILE="/etc/debian-vpn-hardening.conf"
 PORTS_FILE="/etc/debian-vpn-hardening.ports"
 NFT_RULES_FILE="/etc/nftables.conf"
+SSH_HARDENING_CONFIG="/etc/ssh/sshd_config.d/99-hardening.conf"
 ROLLBACK_UNIT="fw-rollback"
 ROLLBACK_TIMEOUT=120
 
@@ -419,6 +420,297 @@ list_port_rules() {
 }
 
 # =============================================================================
+# SSH Hardening
+# =============================================================================
+
+# Returns a newline-separated list of non-root users in the sudo group
+get_sudo_users() {
+    getent group sudo 2>/dev/null | cut -d: -f4 | tr ',' '\n' | grep -v '^\s*$' || true
+}
+
+harden_ssh() {
+    echo ""
+    echo -e "${BOLD}=== SSH Hardening ===${NC}"
+    echo ""
+
+    # Show existing sudo users to help the user pick
+    local sudo_users
+    sudo_users=$(get_sudo_users)
+
+    if [[ -n "$sudo_users" ]]; then
+        echo -e "  ${CYAN}Sudo users detected on this system:${NC}"
+        while read -r u; do
+            local key_status=""
+            if [[ -f "/home/${u}/.ssh/authorized_keys" ]] && [[ -s "/home/${u}/.ssh/authorized_keys" ]]; then
+                key_status="${GREEN}(SSH key present)${NC}"
+            else
+                key_status="${RED}(no SSH key found)${NC}"
+            fi
+            echo -e "    - ${u}  ${key_status}"
+        done <<< "$sudo_users"
+    else
+        log_warn "No users found in the sudo group."
+    fi
+
+    echo ""
+    read -rp "  Admin username to keep SSH access for: " admin_user
+    if [[ -z "$admin_user" ]]; then
+        log_warn "Skipping SSH hardening."; return 0
+    fi
+
+    # Verify the user exists
+    if ! id "$admin_user" &>/dev/null; then
+        log_error "User '$admin_user' does not exist on this system."
+        return 1
+    fi
+
+    # Verify sudo membership
+    if ! groups "$admin_user" 2>/dev/null | grep -qw sudo; then
+        log_warn "User '$admin_user' is not in the sudo group."
+        read -rp "  Continue anyway? [y/N]: " cont
+        [[ "$cont" =~ ^[Yy]$ ]] || return 0
+    fi
+
+    # Check for SSH keys — warn if missing, they will be locked out
+    local key_file="/home/${admin_user}/.ssh/authorized_keys"
+    if [[ ! -f "$key_file" ]] || [[ ! -s "$key_file" ]]; then
+        echo ""
+        log_warn "No SSH authorized_keys found for ${admin_user} at ${key_file}."
+        log_warn "If you disable password auth without a key, you will be LOCKED OUT."
+        echo ""
+        read -rp "  Copy root's authorized_keys to ${admin_user}? [Y/n]: " copy_keys
+        copy_keys=${copy_keys:-Y}
+        if [[ "$copy_keys" =~ ^[Yy]$ ]]; then
+            local home_dir
+            home_dir=$(getent passwd "$admin_user" | cut -d: -f6)
+            mkdir -p "${home_dir}/.ssh"
+            cp /root/.ssh/authorized_keys "${home_dir}/.ssh/authorized_keys" 2>/dev/null || {
+                log_error "Could not copy keys — /root/.ssh/authorized_keys missing."
+                log_error "Add an SSH key for ${admin_user} manually before continuing."
+                return 1
+            }
+            chown -R "${admin_user}:${admin_user}" "${home_dir}/.ssh"
+            chmod 700 "${home_dir}/.ssh"
+            chmod 600 "${home_dir}/.ssh/authorized_keys"
+            log_info "SSH keys copied to ${home_dir}/.ssh/authorized_keys"
+        else
+            log_warn "Skipping key copy. Ensure keys are in place before disabling password auth."
+        fi
+    else
+        log_info "SSH key found for ${admin_user}."
+    fi
+
+    echo ""
+    echo "  Will apply to ${SSH_HARDENING_CONFIG}:"
+    echo "    PermitRootLogin no"
+    echo "    PasswordAuthentication no"
+    echo "    PubkeyAuthentication yes"
+    echo "    AllowUsers ${admin_user}"
+    echo "    MaxAuthTries 3"
+    echo "    LoginGraceTime 20"
+    echo "    X11Forwarding no"
+    echo ""
+    echo "  Root password will also be locked (passwd -l root)."
+    echo "  OVH KVM console access via SSH key is unaffected."
+    echo ""
+    echo -e "  ${ORANGE}IMPORTANT:${NC} Open a NEW terminal and verify you can SSH as"
+    echo "  '${admin_user}' BEFORE confirming below."
+    echo ""
+    read -rp "  Apply SSH hardening? [y/N]: " confirm
+    [[ "$confirm" =~ ^[Yy]$ ]] || { log_warn "SSH hardening skipped."; return 0; }
+
+    # Write drop-in config (does not touch main sshd_config)
+    mkdir -p "$(dirname "$SSH_HARDENING_CONFIG")"
+    cat > "$SSH_HARDENING_CONFIG" << EOF
+# Managed by debian-vpn-hardening.sh — do not edit manually
+PermitRootLogin no
+PasswordAuthentication no
+PubkeyAuthentication yes
+AllowUsers ${admin_user}
+MaxAuthTries 3
+LoginGraceTime 20
+X11Forwarding no
+EOF
+
+    # Reload SSH (re-reads config without killing existing sessions)
+    local ssh_svc="ssh"
+    systemctl is-active --quiet sshd 2>/dev/null && ssh_svc="sshd"
+    systemctl reload "$ssh_svc" 2>/dev/null || systemctl restart "$ssh_svc" 2>/dev/null || {
+        log_error "Failed to reload SSH daemon."
+        return 1
+    }
+
+    log_info "SSH hardening applied."
+    echo ""
+    echo -e "  ${GREEN}Root login disabled. Password auth disabled. AllowUsers: ${admin_user}.${NC}"
+    echo ""
+    echo "  Verify NOW in a new terminal:"
+    echo "    ssh ${admin_user}@<server-ip>"
+    echo "  Then confirm below."
+    echo ""
+    read -rp "  Confirmed SSH works as ${admin_user}? [y/N]: " verified
+    if [[ ! "$verified" =~ ^[Yy]$ ]]; then
+        log_warn "Reverting SSH hardening config..."
+        rm -f "$SSH_HARDENING_CONFIG"
+        systemctl reload "$ssh_svc" 2>/dev/null || true
+        log_info "SSH config reverted."
+    else
+        log_info "SSH hardening confirmed and retained."
+        passwd -l root > /dev/null 2>&1 \
+            && log_info "Root password locked (KVM key-based console access unaffected)." \
+            || log_warn "Could not lock root password — check manually with: passwd -l root"
+    fi
+}
+
+# =============================================================================
+# Sysctl Kernel Hardening
+# =============================================================================
+
+harden_sysctl() {
+    echo ""
+    echo -e "${BOLD}=== Kernel (sysctl) Hardening ===${NC}"
+    echo ""
+
+    local sysctl_file="/etc/sysctl.d/99-hardening.conf"
+
+    if [[ -f "$sysctl_file" ]]; then
+        log_warn "Already applied ($sysctl_file exists)."
+        read -rp "  Reapply / overwrite? [y/N]: " reapply
+        [[ "$reapply" =~ ^[Yy]$ ]] || return 0
+    fi
+
+    echo "  Will write $sysctl_file:"
+    echo "    SYN flood protection (tcp_syncookies)"
+    echo "    Reverse path filtering — anti-spoofing (rp_filter)"
+    echo "    Block ICMP redirects (MITM routing attacks)"
+    echo "    Block IP source routing"
+    echo "    Ignore broadcast pings (smurf attacks)"
+    echo "    TIME_WAIT assassination protection (tcp_rfc1337)"
+    echo "    Hide kernel symbol addresses (kptr_restrict)"
+    echo "    Restrict dmesg to root (dmesg_restrict)"
+    echo "    Enforce ASLR (randomize_va_space)"
+    echo "    Protected symlinks + hardlinks"
+    echo ""
+    read -rp "  Apply sysctl hardening? [Y/n]: " confirm
+    confirm=${confirm:-Y}
+    [[ "$confirm" =~ ^[Yy]$ ]] || { log_warn "Sysctl hardening skipped."; return 0; }
+
+    cat > "$sysctl_file" << 'EOF'
+# =============================================================================
+# Kernel hardening — managed by debian-vpn-hardening.sh
+# =============================================================================
+
+# SYN flood protection
+net.ipv4.tcp_syncookies = 1
+
+# Reverse path filtering (anti-spoofing)
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+
+# Block ICMP redirects (used for MITM routing attacks)
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+net.ipv6.conf.all.accept_redirects = 0
+net.ipv6.conf.default.accept_redirects = 0
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.default.send_redirects = 0
+
+# Block IP source routing
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv4.conf.default.accept_source_route = 0
+net.ipv6.conf.all.accept_source_route = 0
+
+# Ignore broadcast pings (smurf attack amplification)
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+
+# Ignore bogus ICMP error responses
+net.ipv4.icmp_ignore_bogus_error_responses = 1
+
+# TIME_WAIT assassination protection
+net.ipv4.tcp_rfc1337 = 1
+
+# Hide kernel symbol addresses from unprivileged users
+kernel.kptr_restrict = 2
+
+# Restrict dmesg to root
+kernel.dmesg_restrict = 1
+
+# ASLR — randomise memory address layout
+kernel.randomize_va_space = 2
+
+# Prevent symlink/hardlink TOCTOU attacks
+fs.protected_symlinks = 1
+fs.protected_hardlinks = 1
+EOF
+
+    # Apply immediately without reboot
+    sysctl -p "$sysctl_file" > /dev/null 2>&1
+    log_info "Sysctl hardening applied and persists across reboots."
+}
+
+# =============================================================================
+# Automatic Security Upgrades
+# =============================================================================
+
+harden_autoupgrades() {
+    echo ""
+    echo -e "${BOLD}=== Automatic Security Upgrades ===${NC}"
+    echo ""
+    echo "  Installs and configures unattended-upgrades to automatically"
+    echo "  apply security patches only — never dist-upgrades or new packages."
+    echo "  Kernel updates that require a reboot will reboot at 03:00."
+    echo ""
+    read -rp "  Set up automatic security upgrades? [Y/n]: " confirm
+    confirm=${confirm:-Y}
+    [[ "$confirm" =~ ^[Yy]$ ]] || { log_warn "Auto upgrades skipped."; return 0; }
+
+    if ! dpkg -l unattended-upgrades 2>/dev/null | grep -q "^ii"; then
+        log_step "Installing unattended-upgrades..."
+        DEBIAN_FRONTEND=noninteractive apt-get install -y unattended-upgrades apt-listchanges \
+            > /dev/null 2>&1
+    fi
+
+    # What to upgrade (security only)
+    cat > "/etc/apt/apt.conf.d/50unattended-upgrades" << 'EOF'
+// Managed by debian-vpn-hardening.sh
+Unattended-Upgrade::Origins-Pattern {
+    "origin=Debian,codename=${distro_codename},label=Debian-Security";
+};
+
+Unattended-Upgrade::Package-Blacklist {};
+
+// Remove unused dependencies after upgrade
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+
+// Auto-reboot if required (e.g. kernel update) — at 3am
+Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot-Time "03:00";
+
+// Uncomment to receive email on errors:
+// Unattended-Upgrade::Mail "you@example.com";
+// Unattended-Upgrade::MailReport "on-change";
+EOF
+
+    # Schedule (daily update check + upgrade)
+    cat > "/etc/apt/apt.conf.d/20auto-upgrades" << 'EOF'
+// Managed by debian-vpn-hardening.sh
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::Download-Upgradeable-Packages "1";
+APT::Periodic::AutocleanInterval "7";
+EOF
+
+    systemctl enable unattended-upgrades > /dev/null 2>&1 || true
+    systemctl restart unattended-upgrades > /dev/null 2>&1 || true
+
+    log_info "Automatic security upgrades configured."
+    echo ""
+    echo "  Security patches will auto-apply daily."
+    echo "  Reboot-required updates trigger a reboot at 03:00."
+    echo "  To change reboot time: edit /etc/apt/apt.conf.d/50unattended-upgrades"
+}
+
+# =============================================================================
 # OVH Hardware Firewall Guide
 # =============================================================================
 
@@ -748,6 +1040,52 @@ show_status() {
         || echo -e "  Boot service  : ${RED}disabled${NC}"
     echo ""
 
+    echo -e "${CYAN}SSH hardening (${SSH_HARDENING_CONFIG}):${NC}"
+    if [[ -f "$SSH_HARDENING_CONFIG" ]]; then
+        local root_login pw_auth
+        root_login=$(grep -oP '(?<=PermitRootLogin )\S+' "$SSH_HARDENING_CONFIG" 2>/dev/null || echo "unset")
+        pw_auth=$(grep -oP '(?<=PasswordAuthentication )\S+' "$SSH_HARDENING_CONFIG" 2>/dev/null || echo "unset")
+        echo -e "  Drop-in       : ${GREEN}present${NC}"
+        echo "  PermitRootLogin     : ${root_login}"
+        echo "  PasswordAuthentication : ${pw_auth}"
+        echo ""
+        echo -e "  ${CYAN}Sudo users:${NC}"
+        local sudo_users
+        sudo_users=$(get_sudo_users)
+        if [[ -n "$sudo_users" ]]; then
+            while read -r u; do
+                local key_note=""
+                [[ -f "/home/${u}/.ssh/authorized_keys" ]] && [[ -s "/home/${u}/.ssh/authorized_keys" ]] \
+                    && key_note="${GREEN}key ok${NC}" || key_note="${RED}no key${NC}"
+                printf "    - %-20s " "$u"
+                echo -e "$key_note"
+            done <<< "$sudo_users"
+        else
+            echo "    None found in sudo group"
+        fi
+    else
+        echo -e "  ${ORANGE}Not applied — root login and password auth may still be enabled${NC}"
+    fi
+    echo ""
+
+    echo -e "${CYAN}Sysctl hardening:${NC}"
+    if [[ -f "/etc/sysctl.d/99-hardening.conf" ]]; then
+        echo -e "  ${GREEN}Applied${NC} (/etc/sysctl.d/99-hardening.conf)"
+    else
+        echo -e "  ${ORANGE}Not applied${NC}"
+    fi
+    echo ""
+
+    echo -e "${CYAN}Automatic security upgrades:${NC}"
+    if dpkg -l unattended-upgrades 2>/dev/null | grep -q "^ii"; then
+        systemctl is-active --quiet unattended-upgrades 2>/dev/null \
+            && echo -e "  unattended-upgrades: ${GREEN}active${NC}" \
+            || echo -e "  unattended-upgrades: ${ORANGE}installed but not running${NC}"
+    else
+        echo -e "  ${ORANGE}Not installed${NC}"
+    fi
+    echo ""
+
     list_port_rules
 
     echo -e "${CYAN}Rollback timer:${NC}"
@@ -857,6 +1195,15 @@ run_setup_wizard() {
         [[ "$wg_port" =~ ^[0-9]+$ ]] || { log_error "Invalid port."; exit 1; }
     fi
 
+    # SSH hardening (disable root login, password auth, AllowUsers, lock root password)
+    harden_ssh
+
+    # Sysctl kernel hardening
+    harden_sysctl
+
+    # Automatic security upgrades
+    harden_autoupgrades
+
     # OVH guide
     show_ovh_guide "$wg_port"
     read -rp "Have you configured the OVH hardware firewall? [y/N]: " ovh_done
@@ -944,21 +1291,27 @@ main_menu() {
         echo "  1) Status"
         echo "  2) Manage public port rules"
         echo "  3) Reapply rules (apply changes to port rules)"
-        echo "  4) Cancel rollback timer"
-        echo "  5) Restore last backup"
-        echo "  6) Re-run setup wizard"
-        echo "  7) Exit"
+        echo "  4) SSH hardening (root login, password auth, AllowUsers)"
+        echo "  5) Sysctl kernel hardening"
+        echo "  6) Automatic security upgrades"
+        echo "  7) Cancel rollback timer"
+        echo "  8) Restore last backup"
+        echo "  9) Re-run setup wizard"
+        echo "  0) Exit"
         echo ""
-        read -rp "  Choose [1-7]: " choice
+        read -rp "  Choose [0-9]: " choice
 
         case "$choice" in
             1) show_status ;;
             2) port_rules_menu; load_port_rules ;;
             3) reapply_rules ;;
-            4) cancel_rollback ;;
-            5) restore_backup ;;
-            6) run_setup_wizard ;;
-            7) echo "Goodbye."; exit 0 ;;
+            4) harden_ssh ;;
+            5) harden_sysctl ;;
+            6) harden_autoupgrades ;;
+            7) cancel_rollback ;;
+            8) restore_backup ;;
+            9) run_setup_wizard ;;
+            0) echo "Goodbye."; exit 0 ;;
             *) log_error "Invalid option." ;;
         esac
 
