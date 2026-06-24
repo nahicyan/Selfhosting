@@ -156,10 +156,11 @@ MONGO_CONTAINER=""
 MONGO_CONTAINER=$(docker ps --filter "label=container_tag=${INSTANCE_NAME}#mongodb" \
   --format "{{.Names}}" 2>/dev/null | head -n1 || true)
 
-# Second try: name pattern
+# Second try: name pattern (also try sanitized name — Docker Compose strips dots/hyphens from dir names)
 if [ -z "$MONGO_CONTAINER" ]; then
+  SANITIZED_NAME=$(echo "$INSTANCE_NAME" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]')
   MONGO_CONTAINER=$(docker ps --format "{{.Names}}" 2>/dev/null | \
-    grep -i "${INSTANCE_NAME}.*mongo\|mongo.*${INSTANCE_NAME}" | head -n1 || true)
+    grep -i "${INSTANCE_NAME}.*mongo\|mongo.*${INSTANCE_NAME}\|${SANITIZED_NAME}.*mongo\|mongo.*${SANITIZED_NAME}" | head -n1 || true)
 fi
 
 # Third try: list all and ask

@@ -1,0 +1,159 @@
+root@mail:/home/debian/Selfhosting/OpenSource/RocketChat# ./scripts//rocketchat-docker-backup.sh 
+
+=====> Rocket.Chat MongoDB Backup
+========================================
+Choose the directory where you want to save the backup:
+  1) Default: /home/backup
+  2) Custom path
+Select [1/2]: 1
+
+Where are your Rocket.Chat instances located?
+  1) Default: /var/www/docker/rocketchat
+  2) Custom path
+Select [1/2]: 1
+
+Scanning for Rocket.Chat instances in: /var/www/docker/rocketchat
+--------------------------------------------
+Found instances:
+  1) portal.landersinvestment.com  (/var/www/docker/rocketchat/portal.landersinvestment.com)
+
+Select instance number: 1
+
+Looking for MongoDB container for instance: portal.landersinvestment.com
+Could not auto-detect MongoDB container. Listing all running containers:
+
+  1) shlink-web-client
+  2) shlink-backend
+  3) shlink-database
+  4) learning_prod_setup-cron-1
+  5) learning_prod_setup-frontend-1
+  6) learning_prod_setup-websocket-1
+  7) learning_prod_setup-queue-long-1
+  8) learning_prod_setup-scheduler-1
+  9) learning_prod_setup-queue-short-1
+  10) learning_prod_setup-backend-1
+  11) learning_prod_setup-redis-queue-1
+  12) learning_prod_setup-redis-cache-1
+  13) learning_prod_setup-db-1
+  14) portallandersinvestmentcom-mongodb-1
+  15) portallandersinvestmentcom-rocketchat-1
+  16) mailcowdockerized-watchdog-mailcow-1
+  17) mailcowdockerized-acme-mailcow-1
+  18) mailcowdockerized-nginx-mailcow-1
+  19) mailcowdockerized-ofelia-mailcow-1
+  20) mailcowdockerized-rspamd-mailcow-1
+  21) mailcowdockerized-dovecot-mailcow-1
+  22) mailcowdockerized-postfix-mailcow-1
+  23) mailcowdockerized-php-fpm-mailcow-1
+  24) mailcowdockerized-mysql-mailcow-1
+  25) mailcowdockerized-redis-mailcow-1
+  26) mailcowdockerized-postfix-tlspol-mailcow-1
+  27) mailcowdockerized-clamd-mailcow-1
+  28) mailcowdockerized-memcached-mailcow-1
+  29) mailcowdockerized-sogo-mailcow-1
+  30) mailcowdockerized-unbound-mailcow-1
+  31) mailcowdockerized-dockerapi-mailcow-1
+  32) mailcowdockerized-netfilter-mailcow-1
+  33) mailcowdockerized-olefy-mailcow-1
+  34) keycloak_app
+  35) keycloak_postgres
+  36) adminlandivocom-keycloak-1
+  37) adminlandivocom-keycloak_postgres-1
+  38) wg-easy
+
+Select MongoDB container number: 14
+Using container: portallandersinvestmentcom-mongodb-1
+
+Starting backup...
+  Instance : portal.landersinvestment.com
+  Container: portallandersinvestmentcom-mongodb-1
+  Folder   : /home/backup/rocketchat-portal.landersinvestment.com/2026-06-24-15-13-52
+  Output   : RC_portal.landersinvestment.com_2026-06-24-15-13-52.dump
+
+2026-06-24T15:13:52.637+0000    writing admin.system.version to archive on stdout
+
+
+root@mail:/home/debian/Selfhosting/OpenSource/RocketChat# ./scripts//rocketchat-docker-restore.sh 
+
+=====> Rocket.Chat MongoDB Restore
+========================================
+Choose the directory where your backup files are located:
+  1) Default: /home/backup
+  2) Custom path
+Select [1/2]: 1
+
+Using backup folder: rocketchat-portal.landersinvestment.com
+
+  #    Date                              Dump    
+  ---- --------------------------------- --------
+  1)   June 24, 2026, 03:13 PM           ok      
+
+Select backup number to restore: 1
+Selected: RC_portal.landersinvestment.com_2026-06-24-15-13-52.dump
+
+Where are your Rocket.Chat instances located?
+  1) Default: /var/www/docker/rocketchat
+  2) Custom path
+Select [1/2]: 1
+
+Scanning for Rocket.Chat instances in: /var/www/docker/rocketchat
+--------------------------------------------
+Found instances:
+  1) portal.landersinvestment.com  (/var/www/docker/rocketchat/portal.landersinvestment.com)
+
+Select instance number to restore INTO: 1
+
+Looking for MongoDB container for instance: portal.landersinvestment.com
+Could not auto-detect MongoDB container. Listing all running containers:
+
+  1) shlink-web-client
+  2) shlink-backend
+  3) shlink-database
+  4) learning_prod_setup-cron-1
+  5) learning_prod_setup-frontend-1
+  6) learning_prod_setup-websocket-1
+  7) learning_prod_setup-queue-long-1
+  8) learning_prod_setup-scheduler-1
+  9) learning_prod_setup-queue-short-1
+  10) learning_prod_setup-backend-1
+  11) learning_prod_setup-redis-queue-1
+  12) learning_prod_setup-redis-cache-1
+  13) learning_prod_setup-db-1
+  14) portallandersinvestmentcom-mongodb-1
+  15) portallandersinvestmentcom-rocketchat-1
+  16) mailcowdockerized-watchdog-mailcow-1
+  17) mailcowdockerized-acme-mailcow-1
+  18) mailcowdockerized-nginx-mailcow-1
+  19) mailcowdockerized-ofelia-mailcow-1
+  20) mailcowdockerized-rspamd-mailcow-1
+  21) mailcowdockerized-dovecot-mailcow-1
+  22) mailcowdockerized-postfix-mailcow-1
+  23) mailcowdockerized-php-fpm-mailcow-1
+  24) mailcowdockerized-mysql-mailcow-1
+  25) mailcowdockerized-redis-mailcow-1
+  26) mailcowdockerized-postfix-tlspol-mailcow-1
+  27) mailcowdockerized-clamd-mailcow-1
+  28) mailcowdockerized-memcached-mailcow-1
+  29) mailcowdockerized-sogo-mailcow-1
+  30) mailcowdockerized-unbound-mailcow-1
+  31) mailcowdockerized-dockerapi-mailcow-1
+  32) mailcowdockerized-netfilter-mailcow-1
+  33) mailcowdockerized-olefy-mailcow-1
+  34) keycloak_app
+  35) keycloak_postgres
+  36) adminlandivocom-keycloak-1
+  37) adminlandivocom-keycloak_postgres-1
+  38) wg-easy
+
+Select MongoDB container number: 14
+Using container: portallandersinvestmentcom-mongodb-1
+
+⚠️  WARNING: This will DROP all existing collections and overwrite them from the backup!
+            Stop the RocketChat container before restoring to avoid write conflicts.
+
+  Backup file : RC_portal.landersinvestment.com_2026-06-24-15-13-52.dump
+  Target      : portal.landersinvestment.com
+  Container   : portallandersinvestmentcom-mongodb-1
+
+Are you sure you want to proceed? Type 'yes' to confirm: 
+
