@@ -242,7 +242,8 @@ detect_wg_subnet() {
 
 check_connected_via_vpn() {
     local wg_nic="$1"
-    local client_ip="${SSH_CLIENT%% *}"
+    local client_ip="${SSH_CLIENT:-}"
+    client_ip="${client_ip%% *}"
     [[ -z "$client_ip" ]] && return 1
 
     local wg_subnet
