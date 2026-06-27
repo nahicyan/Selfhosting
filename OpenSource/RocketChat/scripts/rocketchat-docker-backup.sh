@@ -100,7 +100,8 @@ MONGO_CONTAINER=$(docker ps --filter "label=container_tag=${INSTANCE_NAME}#mongo
 if [ -z "$MONGO_CONTAINER" ]; then
   SANITIZED_NAME=$(echo "$INSTANCE_NAME" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]')
   MONGO_CONTAINER=$(docker ps --format "{{.Names}}" 2>/dev/null | \
-    grep -i "${INSTANCE_NAME}.*mongo\|mongo.*${INSTANCE_NAME}\|${SANITIZED_NAME}.*mongo\|mongo.*${SANITIZED_NAME}" | head -n1 || true)
+    grep -i "${INSTANCE_NAME}.*mongo\|mongo.*${INSTANCE_NAME}\|${SANITIZED_NAME}.*mongo\|mongo.*${SANITIZED_NAME}" | \
+    grep -iv "exporter" | head -n1 || true)
 fi
 
 # Third try: list all running mongo containers and ask user
