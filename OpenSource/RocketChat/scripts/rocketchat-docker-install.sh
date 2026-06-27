@@ -58,7 +58,7 @@ fi
 
 # ── Start containers ──────────────────────────────────────────────────────────
 echo "==> Starting RocketChat containers…"
-docker compose -f compose.database.yml -f compose.yml up -d rocketchat mongodb
+docker compose -f compose.database.yml -f compose.yml up -d
 echo "==> Containers started."
 echo
 
@@ -104,6 +104,6 @@ echo "==> RocketChat installation complete."
 echo "    URL: https://$domain"
 echo
 echo "    Useful commands (run from $INSTALL_DIR):"
-echo "    Start   : docker compose -f compose.database.yml -f compose.yml up -d rocketchat mongodb"
+echo "    Start   : docker compose -f compose.database.yml -f compose.yml up -d"
 echo "    Stop    : docker compose -f compose.database.yml -f compose.yml down"
 echo "    Restart : docker compose -f compose.database.yml -f compose.yml restart"
