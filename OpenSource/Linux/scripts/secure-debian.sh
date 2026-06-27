@@ -815,7 +815,10 @@ generate_ruleset() {
 # Port rules: ${#PORT_RULES[@]}
 # =============================================================================
 
-flush ruleset
+# Only flush our table — Docker and other tools manage their own ip/ip6 tables
+# via iptables-nft and must not be disrupted on rule reapplication.
+add table inet filter
+flush table inet filter
 
 table inet filter {
 ${cf_sets}
@@ -849,6 +852,17 @@ ${port_fragment}
 
     chain forward {
         type filter hook forward priority filter; policy drop;
+
+        ct state invalid drop
+        ct state { established, related } accept
+
+        # Docker bridge networks — containers need internet access and
+        # inter-container routing. Docker manages per-bridge rules itself
+        # via iptables-nft; we just need to not block the bridge interfaces.
+        iifname "docker0" accept comment "Docker default bridge"
+        oifname "docker0" accept comment "Docker default bridge"
+        iifname "br-*" accept comment "Docker custom networks"
+        oifname "br-*" accept comment "Docker custom networks"
     }
 
     chain output {
