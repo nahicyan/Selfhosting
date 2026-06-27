@@ -206,7 +206,7 @@ detect_wireguard() {
         [[ -f "$conf" ]] || continue
         local nic port
         nic=$(basename "$conf" .conf)
-        port=$(grep -iP '^\s*ListenPort\s*=' "$conf" 2>/dev/null | grep -oP '\d+' | head -1)
+        port=$(grep -iP '^\s*ListenPort\s*=' "$conf" 2>/dev/null | grep -oP '\d+' | head -1 || true)
         if [[ -n "$port" ]]; then
             echo "${nic}:${port}"
             return
@@ -216,7 +216,7 @@ detect_wireguard() {
     # Method 3: wg show (if a tunnel is already up)
     if command -v wg &>/dev/null; then
         local nic port
-        nic=$(wg show interfaces 2>/dev/null | awk '{print $1}' | head -1)
+        nic=$(wg show interfaces 2>/dev/null | awk '{print $1}' | head -1 || true)
         if [[ -n "$nic" ]]; then
             port=$(wg show "$nic" listen-port 2>/dev/null || true)
             if [[ -n "$port" ]]; then
@@ -753,10 +753,11 @@ generate_ruleset() {
     local wg_nic="$1"
     local wg_port="$2"
 
-    # Load CF IPs only if we have cloudflare-restricted rules
+    # CF arrays must be pre-populated by the caller before this function is
+    # invoked — load_cloudflare_ips() prints to stdout and must NOT be called
+    # inside a command substitution or its log lines corrupt the ruleset.
     local cf_sets=""
     if any_cloudflare_rules; then
-        load_cloudflare_ips
         local cf_v4_elems cf_v6_elems
         cf_v4_elems=$(format_nft_set CF_IPV4)
         cf_v6_elems=$(format_nft_set CF_IPV6)
@@ -863,7 +864,10 @@ apply_ruleset() {
 
     echo "$ruleset" > "$tmp"
     log_step "Applying nftables rules atomically..."
-    nft -f "$tmp"
+    if ! nft -f "$tmp"; then
+        log_error "nftables rule application failed — rules unchanged."
+        return 1
+    fi
     log_info "Rules applied."
 }
 
@@ -1013,7 +1017,7 @@ show_status() {
         echo "  WireGuard     : ${wg_nic} port ${wg_port}/udp"
         if ip link show "$wg_nic" &>/dev/null; then
             local peers
-            peers=$(wg show "$wg_nic" peers 2>/dev/null | wc -l)
+            peers=$(wg show "$wg_nic" peers 2>/dev/null | wc -l || true)
             echo "  WG status     : UP (${peers} peer(s))"
         else
             echo -e "  WG status     : ${RED}DOWN${NC}"
@@ -1026,7 +1030,7 @@ show_status() {
     echo -e "${CYAN}nftables:${NC}"
     if nft list tables 2>/dev/null | grep -q "inet filter"; then
         local policy
-        policy=$(nft list chain inet filter input 2>/dev/null | grep -oP 'policy \K\w+')
+        policy=$(nft list chain inet filter input 2>/dev/null | grep -oP 'policy \K\w+' || true)
         echo -e "  Ruleset       : ${GREEN}loaded${NC} (INPUT policy: ${policy:-unknown})"
     else
         echo -e "  Ruleset       : ${ORANGE}not loaded${NC}"
@@ -1115,8 +1119,8 @@ port_rules_menu() {
         read -rp "  Choose: " choice
 
         case "$choice" in
-            a|A) add_port_rule ;;
-            r|R) remove_port_rule ;;
+            a|A) add_port_rule || true ;;
+            r|R) remove_port_rule || true ;;
             b|B) return 0 ;;
             *) log_error "Invalid option." ;;
         esac
@@ -1134,6 +1138,7 @@ reapply_rules() {
     fi
 
     load_port_rules
+    any_cloudflare_rules && load_cloudflare_ips
     local ruleset
     ruleset=$(generate_ruleset "${WG_NIC}" "${WG_PORT}")
 
@@ -1148,7 +1153,11 @@ reapply_rules() {
 
     backup_rules
     schedule_rollback "$ROLLBACK_TIMEOUT"
-    apply_ruleset "$ruleset"
+    if ! apply_ruleset "$ruleset"; then
+        log_warn "Cancelling rollback timer — old rules remain in place."
+        cancel_rollback
+        return 0
+    fi
 
     echo ""
     echo -e "${GREEN}Rules applied. Verify in a NEW terminal, then run: $0 --cancel${NC}"
@@ -1232,6 +1241,7 @@ run_setup_wizard() {
 
     # Generate and show ruleset (no port rules yet)
     load_port_rules
+    any_cloudflare_rules && load_cloudflare_ips
     local ruleset
     ruleset=$(generate_ruleset "$wg_nic" "$wg_port")
 
@@ -1253,7 +1263,12 @@ run_setup_wizard() {
 
     backup_rules
     schedule_rollback "$ROLLBACK_TIMEOUT"
-    apply_ruleset "$ruleset"
+    if ! apply_ruleset "$ruleset"; then
+        log_warn "Cancelling rollback timer — old rules remain in place."
+        cancel_rollback
+        echo "  Fix the issue and re-run the wizard."
+        return 0
+    fi
 
     echo ""
     echo -e "${GREEN}═════════════════════════════════════════════════════════════════${NC}"
@@ -1305,13 +1320,13 @@ main_menu() {
         case "$choice" in
             1) show_status ;;
             2) port_rules_menu; load_port_rules ;;
-            3) reapply_rules ;;
-            4) harden_ssh ;;
+            3) reapply_rules || true ;;
+            4) harden_ssh || true ;;
             5) harden_sysctl ;;
             6) harden_autoupgrades ;;
             7) cancel_rollback ;;
-            8) restore_backup ;;
-            9) run_setup_wizard ;;
+            8) restore_backup || true ;;
+            9) run_setup_wizard || true ;;
             0) echo "Goodbye."; exit 0 ;;
             *) log_error "Invalid option." ;;
         esac
@@ -1332,10 +1347,14 @@ apply_from_config() {
     fi
 
     load_port_rules
+    any_cloudflare_rules && load_cloudflare_ips
     log_step "Regenerating ruleset (WG: ${WG_NIC}:${WG_PORT}, ${#PORT_RULES[@]} port rule(s))..."
     local ruleset
     ruleset=$(generate_ruleset "${WG_NIC}" "${WG_PORT}")
-    apply_ruleset "$ruleset"
+    if ! apply_ruleset "$ruleset"; then
+        log_error "Boot-time rule application failed."
+        exit 1
+    fi
     log_info "Rules applied from saved config."
 }
 
