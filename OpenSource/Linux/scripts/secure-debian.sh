@@ -89,7 +89,7 @@ log_step()  { echo -e "${BLUE}[→]${NC} $1"; }
 
 check_root() {
     if [[ $EUID -ne 0 ]]; then
-        log_error "Must be run as root."
+        log_error "Must be run as root. Try: sudo $0"
         exit 1
     fi
 }
@@ -244,6 +244,13 @@ check_connected_via_vpn() {
     local wg_nic="$1"
     local client_ip="${SSH_CLIENT:-}"
     client_ip="${client_ip%% *}"
+
+    # sudo strips SSH_CLIENT from the environment — fall back to who am i
+    # which reports the terminal's remote IP regardless of privilege escalation
+    if [[ -z "$client_ip" ]]; then
+        client_ip=$(who am i 2>/dev/null | grep -oP '\(\K[^\)]+' | head -1 || true)
+    fi
+
     [[ -z "$client_ip" ]] && return 1
 
     local wg_subnet
