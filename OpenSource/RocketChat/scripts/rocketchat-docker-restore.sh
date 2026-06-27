@@ -152,13 +152,16 @@ echo "Looking for MongoDB container for instance: $INSTANCE_NAME"
 
 MONGO_CONTAINER=""
 
-# First try: container_tag label
-MONGO_CONTAINER=$(docker ps --filter "label=container_tag=${INSTANCE_NAME}#mongodb" \
+# Docker Compose sanitizes the project name (strips dots and special chars) when setting
+# the container_tag label, so portal.landersinvestment.com → portallandersinvestmentcom
+SANITIZED_NAME=$(echo "$INSTANCE_NAME" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]')
+
+# First try: container_tag label (uses sanitized project name)
+MONGO_CONTAINER=$(docker ps --filter "label=container_tag=${SANITIZED_NAME}#mongodb" \
   --format "{{.Names}}" 2>/dev/null | head -n1 || true)
 
-# Second try: name pattern (also try sanitized name — Docker Compose strips dots/hyphens from dir names)
+# Second try: name pattern
 if [ -z "$MONGO_CONTAINER" ]; then
-  SANITIZED_NAME=$(echo "$INSTANCE_NAME" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]')
   MONGO_CONTAINER=$(docker ps --format "{{.Names}}" 2>/dev/null | \
     grep -i "${INSTANCE_NAME}.*mongo\|mongo.*${INSTANCE_NAME}\|${SANITIZED_NAME}.*mongo\|mongo.*${SANITIZED_NAME}" | \
     grep -iv "exporter" | head -n1 || true)
@@ -213,4 +216,4 @@ echo "   Restored from : $(basename "$SELECTED_DUMP")"
 echo "   Into instance : $INSTANCE_NAME"
 echo ""
 echo "💡 Tip: Restart both containers to apply changes:"
-echo "   cd $SELECTED_PATH && docker compose -f compose.database.yml -f compose.yml restart"
+echo "   cd $SELECTED_PATH && docker compose -f compose.database.yml -f compose.nats.yml -f compose.yml restart"

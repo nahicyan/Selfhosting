@@ -43,6 +43,8 @@ sed -i \
 grep -q "^DOMAIN=" .env        || echo "DOMAIN=$domain"                >> .env
 grep -q "^ROOT_URL=" .env      || echo "ROOT_URL=https://$domain"      >> .env
 grep -q "^HOST_PORT=" .env     || echo "HOST_PORT=$port"               >> .env
+# Bind to localhost only — Nginx proxies to RocketChat; 0.0.0.0 would expose ports 3000 and 9458 publicly
+grep -q "^BIND_IP=" .env       || echo "BIND_IP=127.0.0.1"             >> .env
 
 # ── Review .env ───────────────────────────────────────────────────────────────
 read -rp "Would you like to review/edit the .env file? [y/N] " ans_env
@@ -58,7 +60,7 @@ fi
 
 # ── Start containers ──────────────────────────────────────────────────────────
 echo "==> Starting RocketChat containers…"
-docker compose -f compose.database.yml -f compose.yml up -d
+docker compose -f compose.database.yml -f compose.nats.yml -f compose.yml up -d
 echo "==> Containers started."
 echo
 
@@ -104,6 +106,6 @@ echo "==> RocketChat installation complete."
 echo "    URL: https://$domain"
 echo
 echo "    Useful commands (run from $INSTALL_DIR):"
-echo "    Start   : docker compose -f compose.database.yml -f compose.yml up -d"
-echo "    Stop    : docker compose -f compose.database.yml -f compose.yml down"
-echo "    Restart : docker compose -f compose.database.yml -f compose.yml restart"
+echo "    Start   : docker compose -f compose.database.yml -f compose.nats.yml -f compose.yml up -d"
+echo "    Stop    : docker compose -f compose.database.yml -f compose.nats.yml -f compose.yml down"
+echo "    Restart : docker compose -f compose.database.yml -f compose.nats.yml -f compose.yml restart"
