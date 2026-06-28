@@ -1,0 +1,83 @@
+root@sapphire:~# cd /home/debian/
+root@sapphire:/home/debian# ls
+Selfhosting  cerulean  portal.landersinvestment.com  sapphire
+root@sapphire:/home/debian# chown -R debian:debian ./sapphire/
+root@sapphire:/home/debian# cd Selfhosting/OpenSource/Frappe/
+root@sapphire:/home/debian/Selfhosting/OpenSource/Frappe# ./scripts/frappe-docker-restore.sh 
+
+=====> Frappe LMS Restore
+========================================
+Choose the directory where your backup files are located:
+  1) Default: /home/backup
+  2) Custom path
+Select [1/2]: 2
+Enter custom backup base path: /home/debian/sapphire/201/frappe-lms-training.landersinvestment.com/
+
+Using backup folder: frappe-lms-training.landersinvestment.com
+
+  #    Date                              DB     Files    Private    Config  
+  ---- --------------------------------- ------ -------- ---------- --------
+  1)   June 27, 2026, 03:37 AM           ok     ok       ok         ok      
+
+Select backup number to restore: 1
+=== Password file contents ===
+ADMINISTRATOR_PASSWORD=b785cc21791c
+MARIADB_ROOT_PASSWORD=c4b054d42
+
+Enter MySQL root password: 
+=== Step 1: Creating backup directory in container ===
+=== Step 2: Copying backup files to container ===
+Successfully copied 78.1MB (transferred 78.1MB) to learning_prod_setup-backend-1:/home/frappe/backups/
+=== Step 3: Fixing permissions ===
+=== Step 4: Finding latest backup files ===
+Database:      
+Public files:  
+Private files: 
+ERROR: No database backup found for training.landersinvestment.com/
+root@sapphire:/home/debian/Selfhosting/OpenSource/Frappe# cd /home/debian/sapphire/201/frappe-lms-training.landersinvestment.com/
+root@sapphire:/home/debian/sapphire/201/frappe-lms-training.landersinvestment.com# ls
+2026-06-27-03-37-05
+root@sapphire:/home/debian/sapphire/201/frappe-lms-training.landersinvestment.com# cd 2026-06-27-03-37-05/
+root@sapphire:/home/debian/sapphire/201/frappe-lms-training.landersinvestment.com/2026-06-27-03-37-05# ls
+20260627_033706-training_landersinvestment_com-database.sql.gz  20260627_033706-training_landersinvestment_com-files.tgz  20260627_033706-training_landersinvestment_com-private-files.tgz  20260627_033706-training_landersinvestment_com-site_config_backup.json
+root@sapphire:/home/debian/sapphire/201/frappe-lms-training.landersinvestment.com/2026-06-27-03-37-05# ls -al
+total 76296
+drwxr-xr-x 2 debian debian     4096 Jun 27 23:14 .
+drwxr-xr-x 3 debian debian     4096 Jun 27 23:14 ..
+-rw-r--r-- 1 debian debian  2116585 Jun 27 23:14 20260627_033706-training_landersinvestment_com-database.sql.gz
+-rw-r--r-- 1 debian debian 75989069 Jun 27 23:14 20260627_033706-training_landersinvestment_com-files.tgz
+-rw-r--r-- 1 debian debian      147 Jun 27 23:14 20260627_033706-training_landersinvestment_com-private-files.tgz
+-rw-r--r-- 1 debian debian      161 Jun 27 23:14 20260627_033706-training_landersinvestment_com-site_config_backup.json
+root@sapphire:/home/debian/sapphire/201/frappe-lms-training.landersinvestment.com/2026-06-27-03-37-05# cd /home/debian/Selfhosting/OpenSource/Frappe/
+root@sapphire:/home/debian/Selfhosting/OpenSource/Frappe# ./scripts/frappe-docker-restore.sh 
+
+=====> Frappe LMS Restore
+========================================
+Choose the directory where your backup files are located:
+  1) Default: /home/backup
+  2) Custom path
+Select [1/2]: 2
+Enter custom backup base path: /home/debian/sapphire/201/frappe-lms-training.landersinvestment.com/
+
+Using backup folder: frappe-lms-training.landersinvestment.com
+
+  #    Date                              DB     Files    Private    Config  
+  ---- --------------------------------- ------ -------- ---------- --------
+  1)   June 27, 2026, 03:37 AM           ok     ok       ok         ok      
+
+Select backup number to restore: 1
+=== Password file contents ===
+ADMINISTRATOR_PASSWORD=b785cc21791c
+MARIADB_ROOT_PASSWORD=c4b054d42
+
+Enter MySQL root password: 
+=== Step 1: Creating backup directory in container ===
+=== Step 2: Copying backup files to container ===
+Successfully copied 78.1MB (transferred 78.1MB) to learning_prod_setup-backend-1:/home/frappe/backups/
+=== Step 3: Fixing permissions ===
+=== Step 4: Finding latest backup files ===
+Database:      
+Public files:  
+Private files: 
+ERROR: No database backup found for training.landersinvestment.com/
+root@sapphire:/home/debian/Selfhosting/OpenSource/Frappe# 

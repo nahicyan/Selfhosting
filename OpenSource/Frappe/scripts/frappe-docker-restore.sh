@@ -41,6 +41,7 @@ if [ "$BACKUP_BASE_CHOICE" = "2" ]; then
 else
   BACKUP_BASE="/home/backup"
 fi
+BACKUP_BASE="${BACKUP_BASE%/}"
 
 [ -d "$BACKUP_BASE" ] || { echo "Error: '$BACKUP_BASE' not found."; exit 1; }
 
