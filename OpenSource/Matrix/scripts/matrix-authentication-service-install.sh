@@ -70,7 +70,13 @@ txt = re.sub(r"(public_base:).*", r"\1 https://" + masdomain, txt)
 txt = re.sub(r"(issuer:).*",      r"\1 https://" + masdomain, txt)
 
 # ── database: replace postgresql URI ─────────────────────────────────────────
-txt = re.sub(r"(uri: postgresql://)\S+",
+# \S* not \S+: `config generate`'s default output leaves this line as a bare
+# "uri: postgresql://" with NOTHING after the scheme. \S+ requires at least
+# one non-whitespace character to match, so against that bare default it
+# matched zero times and silently left the line untouched — MAS was then
+# trying to connect to a host-less URI. Surfaces as "pool timed out" /
+# "Connection refused", never an auth error, since it never got that far.
+txt = re.sub(r"(uri: postgresql://)\S*",
              r"\1mas:" + mas_password + "@db:5432/mas", txt)
 
 # ── matrix: block — replace ALL fields, keeping the block intact ─────────────

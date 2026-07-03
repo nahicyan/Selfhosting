@@ -1,0 +1,66 @@
+root@vmi3300372:/var/www/docker/MAS/auth.mikrobee.com# docker run --rm --network authmikrobeecom_default postgres:15-alpine pg_isready -h db -p 5432 -U mas
+db:5432 - accepting connections
+root@vmi3300372:/var/www/docker/MAS/auth.mikrobee.com#   docker network inspect authmikrobeecom_default   # confirms both containers actually have IPs on this network
+  docker network ls | wc -l                        # how many docker networks exist on this host total
+[
+    {
+        "Name": "authmikrobeecom_default",
+        "Id": "373c12acf882855615cf332f330fbe30a8b21a5e57b8bb4ae5cb33566066921c",
+        "Created": "2026-07-03T09:12:42.720474631+02:00",
+        "Scope": "local",
+        "Driver": "bridge",
+        "EnableIPv4": true,
+        "EnableIPv6": false,
+        "IPAM": {
+            "Driver": "default",
+            "Options": null,
+            "Config": [
+                {
+                    "Subnet": "172.18.0.0/16",
+                    "Gateway": "172.18.0.1"
+                }
+            ]
+        },
+        "Internal": false,
+        "Attachable": false,
+        "Ingress": false,
+        "ConfigFrom": {
+            "Network": ""
+        },
+        "ConfigOnly": false,
+        "Options": {},
+        "Labels": {
+            "com.docker.compose.config-hash": "537c82b2591d2c1af017c1a5ad8faffe7a4aebbf994eeeff559fcf7cc50a7051",
+            "com.docker.compose.network": "default",
+            "com.docker.compose.project": "authmikrobeecom",
+            "com.docker.compose.version": "5.3.0"
+        },
+        "Containers": {
+            "59aebdfb48f7a9d3d48c2b50479732e1c9a034bde96e5057264f4fd2a5ff31b6": {
+                "Name": "matrix-auth-service",
+                "EndpointID": "15150e1f8306f39b241a3c0c2f0feb51c7c9aabeb2e441fec7f221133b2b10c6",
+                "MacAddress": "b2:b4:45:f5:85:40",
+                "IPv4Address": "172.18.0.3/16",
+                "IPv6Address": ""
+            },
+            "b2871fd9df08546d4996f1d294558972dbbb7d2f25b6694ec20908c25c3c1c83": {
+                "Name": "authmikrobeecom-db-1",
+                "EndpointID": "c714ecb5da57588f61f756ec3efd9760a8b780d5c8f7109985f6668c076c9893",
+                "MacAddress": "3a:4f:93:db:5f:8d",
+                "IPv4Address": "172.18.0.2/16",
+                "IPv6Address": ""
+            }
+        },
+        "Status": {
+            "IPAM": {
+                "Subnets": {
+                    "172.18.0.0/16": {
+                        "IPsInUse": 5,
+                        "DynamicIPsAvailable": 65531
+                    }
+                }
+            }
+        }
+    }
+]
+6

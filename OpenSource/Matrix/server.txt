@@ -1,0 +1,595 @@
+root@vmi3300372:/home/admin/Selfhosting/OpenSource/Matrix# ./scripts/matrix-synapse-install.sh 
+==> Adding Matrix.org apt repository...
+lsb-release is already the newest version (12.1-1).
+lsb-release set to manually installed.
+wget is already the newest version (1.25.0-2).
+Installing:
+  apt-transport-https
+
+Summary:
+  Upgrading: 0, Installing: 1, Removing: 0, Not Upgrading: 5
+  Download size: 38.6 kB
+  Space needed: 49.2 kB / 201 GB available
+
+Get:1 file:/etc/apt/mirrors/debian.list Mirrorlist [30 B]
+Get:2 https://deb.debian.org/debian trixie/main amd64 apt-transport-https all 3.0.3 [38.6 kB]
+Fetched 38.6 kB in 0s (85.7 kB/s)              
+Selecting previously unselected package apt-transport-https.
+(Reading database ... 27456 files and directories currently installed.)
+Preparing to unpack .../apt-transport-https_3.0.3_all.deb ...
+Unpacking apt-transport-https (3.0.3) ...
+Setting up apt-transport-https (3.0.3) ...
+--2026-07-03 09:10:04--  https://packages.matrix.org/debian/matrix-org-archive-keyring.gpg
+Resolving packages.matrix.org (packages.matrix.org)... 2606:4700:10::ac42:8bef, 2606:4700:10::ac42:8703, 172.66.139.239, ...
+Connecting to packages.matrix.org (packages.matrix.org)|2606:4700:10::ac42:8bef|:443... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 2583 (2.5K) [application/octet-stream]
+Saving to: ‘/usr/share/keyrings/matrix-org-archive-keyring.gpg’
+
+/usr/share/keyrings/matrix-org-archive-keyring.gpg         100%[=======================================================================================================================================>]   2.52K  --.-KB/s    in 0s      
+
+2026-07-03 09:10:04 (33.5 MB/s) - ‘/usr/share/keyrings/matrix-org-archive-keyring.gpg’ saved [2583/2583]
+
+deb [signed-by=/usr/share/keyrings/matrix-org-archive-keyring.gpg] https://packages.matrix.org/debian/ trixie main
+==> Installing matrix-synapse-py3 and PostgreSQL...
+Get:1 file:/etc/apt/mirrors/debian.list Mirrorlist [30 B]
+Get:3 file:/etc/apt/mirrors/debian-security.list Mirrorlist [39 B]                                                                                                  
+Hit:7 https://download.docker.com/linux/debian trixie InRelease                                                                          
+Hit:2 https://deb.debian.org/debian trixie InRelease                                                                                     
+Hit:4 https://deb.debian.org/debian trixie-updates InRelease                     
+Hit:5 https://deb.debian.org/debian trixie-backports InRelease
+Hit:6 https://deb.debian.org/debian-security trixie-security InRelease
+Get:8 https://packages.matrix.org/debian trixie InRelease [5141 B]
+Get:9 https://packages.matrix.org/debian trixie/main amd64 Packages [822 B]
+Fetched 5963 B in 0s (12.4 kB/s)
+5 packages can be upgraded. Run 'apt list --upgradable' to see them.
+Installing:                     
+  matrix-synapse-py3  postgresql
+
+Installing dependencies:
+  libcommon-sense-perl  libipc-run-perl  libjson-xs-perl  libpq5             libsensors5               libxslt1.1  logrotate                   postgresql-17         postgresql-client-common  postgresql-common-dev  sysstat
+  libio-pty-perl        libjson-perl     libllvm19        libsensors-config  libtypes-serialiser-perl  libz3-4     matrix-org-archive-keyring  postgresql-client-17  postgresql-common         ssl-cert
+
+Suggested packages:
+  lm-sensors  sqlite3  postgresql-doc  postgresql-doc-17  isag
+
+Summary:
+  Upgrading: 0, Installing: 23, Removing: 0, Not Upgrading: 5
+  Download size: 106 MB
+  Space needed: 494 MB / 201 GB available
+
+Get:1 file:/etc/apt/mirrors/debian.list Mirrorlist [30 B]
+Get:19 file:/etc/apt/mirrors/debian-security.list Mirrorlist [39 B]                       
+Get:2 https://deb.debian.org/debian trixie/main amd64 libjson-perl all 4.10000-1 [87.5 kB]                                                           
+Get:3 https://deb.debian.org/debian trixie/main amd64 postgresql-client-common all 278 [47.1 kB]                         
+Get:4 https://deb.debian.org/debian trixie/main amd64 libio-pty-perl amd64 1:1.20-1+b3 [34.3 kB]
+Get:5 https://deb.debian.org/debian trixie/main amd64 libipc-run-perl all 20231003.0-2 [101 kB]
+Get:24 https://packages.matrix.org/debian trixie/main amd64 matrix-synapse-py3 amd64 1.155.0+trixie1 [51.4 MB]
+Get:6 https://deb.debian.org/debian trixie/main amd64 postgresql-common-dev all 278 [72.4 kB]
+Get:7 https://deb.debian.org/debian trixie/main amd64 ssl-cert all 1.1.3 [16.8 kB]          
+Get:8 https://deb.debian.org/debian trixie/main amd64 postgresql-common all 278 [112 kB]    
+Get:9 https://deb.debian.org/debian trixie/main amd64 logrotate amd64 3.22.0-1 [62.0 kB]
+Get:10 https://deb.debian.org/debian trixie/main amd64 libcommon-sense-perl amd64 3.75-3+b5 [22.9 kB]
+Get:11 https://deb.debian.org/debian trixie/main amd64 libtypes-serialiser-perl all 1.01-1 [12.2 kB]
+Get:12 https://deb.debian.org/debian trixie/main amd64 libjson-xs-perl amd64 4.040-1~deb13u1 [91.0 kB]
+Get:13 https://deb.debian.org/debian trixie/main amd64 libz3-4 amd64 4.13.3-1 [8560 kB]
+Get:14 https://deb.debian.org/debian trixie/main amd64 libllvm19 amd64 1:19.1.7-3+b1 [26.0 MB]
+Get:15 https://deb.debian.org/debian trixie/main amd64 libsensors-config all 1:3.6.2-2 [16.2 kB]
+Get:16 https://deb.debian.org/debian trixie/main amd64 libsensors5 amd64 1:3.6.2-2 [37.5 kB]
+Get:17 https://deb.debian.org/debian trixie/main amd64 libxslt1.1 amd64 1.1.35-1.2+deb13u3 [233 kB]
+Get:18 https://deb.debian.org/debian trixie/main amd64 postgresql all 17+278 [16.7 kB]
+Get:20 https://deb.debian.org/debian trixie/main amd64 sysstat amd64 12.7.5-2 [623 kB]
+Get:21 https://deb.debian.org/debian-security trixie-security/main amd64 libpq5 amd64 17.10-0+deb13u1 [230 kB]
+Get:22 https://deb.debian.org/debian-security trixie-security/main amd64 postgresql-client-17 amd64 17.10-0+deb13u1 [2052 kB]
+Get:23 https://deb.debian.org/debian-security trixie-security/main amd64 postgresql-17 amd64 17.10-0+deb13u1 [16.6 MB]
+Get:25 https://packages.matrix.org/debian trixie/main amd64 matrix-org-archive-keyring all 1.4 [3360 B]
+Fetched 106 MB in 3s (32.9 MB/s)                      
+Preconfiguring packages ...
+/var/cache/debconf/tmp.ci/postgresql.config.fKIz2z: 12: pg_lsclusters: not found
+Selecting previously unselected package libjson-perl.
+(Reading database ... 27460 files and directories currently installed.)
+Preparing to unpack .../00-libjson-perl_4.10000-1_all.deb ...
+Unpacking libjson-perl (4.10000-1) ...
+Selecting previously unselected package postgresql-client-common.
+Preparing to unpack .../01-postgresql-client-common_278_all.deb ...
+Unpacking postgresql-client-common (278) ...
+Selecting previously unselected package libio-pty-perl.
+Preparing to unpack .../02-libio-pty-perl_1%3a1.20-1+b3_amd64.deb ...
+Unpacking libio-pty-perl (1:1.20-1+b3) ...
+Selecting previously unselected package libipc-run-perl.
+Preparing to unpack .../03-libipc-run-perl_20231003.0-2_all.deb ...
+Unpacking libipc-run-perl (20231003.0-2) ...
+Selecting previously unselected package postgresql-common-dev.
+Preparing to unpack .../04-postgresql-common-dev_278_all.deb ...
+Unpacking postgresql-common-dev (278) ...
+Selecting previously unselected package ssl-cert.
+Preparing to unpack .../05-ssl-cert_1.1.3_all.deb ...
+Unpacking ssl-cert (1.1.3) ...
+Selecting previously unselected package postgresql-common.
+Preparing to unpack .../06-postgresql-common_278_all.deb ...
+Adding 'diversion of /usr/bin/pg_config to /usr/bin/pg_config.libpq-dev by postgresql-common'
+Unpacking postgresql-common (278) ...
+Selecting previously unselected package matrix-synapse-py3.
+Preparing to unpack .../07-matrix-synapse-py3_1.155.0+trixie1_amd64.deb ...
+Unpacking matrix-synapse-py3 (1.155.0+trixie1) ...
+Selecting previously unselected package logrotate.
+Preparing to unpack .../08-logrotate_3.22.0-1_amd64.deb ...
+Unpacking logrotate (3.22.0-1) ...
+Selecting previously unselected package libcommon-sense-perl:amd64.
+Preparing to unpack .../09-libcommon-sense-perl_3.75-3+b5_amd64.deb ...
+Unpacking libcommon-sense-perl:amd64 (3.75-3+b5) ...
+Selecting previously unselected package libtypes-serialiser-perl.
+Preparing to unpack .../10-libtypes-serialiser-perl_1.01-1_all.deb ...
+Unpacking libtypes-serialiser-perl (1.01-1) ...
+Selecting previously unselected package libjson-xs-perl.
+Preparing to unpack .../11-libjson-xs-perl_4.040-1~deb13u1_amd64.deb ...
+Unpacking libjson-xs-perl (4.040-1~deb13u1) ...
+Selecting previously unselected package libz3-4:amd64.
+Preparing to unpack .../12-libz3-4_4.13.3-1_amd64.deb ...
+Unpacking libz3-4:amd64 (4.13.3-1) ...
+Selecting previously unselected package libllvm19:amd64.
+Preparing to unpack .../13-libllvm19_1%3a19.1.7-3+b1_amd64.deb ...
+Unpacking libllvm19:amd64 (1:19.1.7-3+b1) ...
+Selecting previously unselected package libpq5:amd64.
+Preparing to unpack .../14-libpq5_17.10-0+deb13u1_amd64.deb ...
+Unpacking libpq5:amd64 (17.10-0+deb13u1) ...
+Selecting previously unselected package libsensors-config.
+Preparing to unpack .../15-libsensors-config_1%3a3.6.2-2_all.deb ...
+Unpacking libsensors-config (1:3.6.2-2) ...
+Selecting previously unselected package libsensors5:amd64.
+Preparing to unpack .../16-libsensors5_1%3a3.6.2-2_amd64.deb ...
+Unpacking libsensors5:amd64 (1:3.6.2-2) ...
+Selecting previously unselected package libxslt1.1:amd64.
+Preparing to unpack .../17-libxslt1.1_1.1.35-1.2+deb13u3_amd64.deb ...
+Unpacking libxslt1.1:amd64 (1.1.35-1.2+deb13u3) ...
+Selecting previously unselected package matrix-org-archive-keyring.
+Preparing to unpack .../18-matrix-org-archive-keyring_1.4_all.deb ...
+Unpacking matrix-org-archive-keyring (1.4) ...
+Selecting previously unselected package postgresql-client-17.
+Preparing to unpack .../19-postgresql-client-17_17.10-0+deb13u1_amd64.deb ...
+Unpacking postgresql-client-17 (17.10-0+deb13u1) ...
+Selecting previously unselected package postgresql-17.
+Preparing to unpack .../20-postgresql-17_17.10-0+deb13u1_amd64.deb ...
+Unpacking postgresql-17 (17.10-0+deb13u1) ...
+Selecting previously unselected package postgresql.
+Preparing to unpack .../21-postgresql_17+278_all.deb ...
+Unpacking postgresql (17+278) ...
+Selecting previously unselected package sysstat.
+Preparing to unpack .../22-sysstat_12.7.5-2_amd64.deb ...
+Unpacking sysstat (12.7.5-2) ...
+Setting up matrix-org-archive-keyring (1.4) ...
+Setting up logrotate (3.22.0-1) ...
+Created symlink '/etc/systemd/system/timers.target.wants/logrotate.timer' → '/usr/lib/systemd/system/logrotate.timer'.
+logrotate.service is a disabled or a static unit, not starting it.
+Setting up postgresql-client-common (278) ...
+Setting up libio-pty-perl (1:1.20-1+b3) ...
+Setting up libsensors-config (1:3.6.2-2) ...
+Setting up libpq5:amd64 (17.10-0+deb13u1) ...
+Setting up libcommon-sense-perl:amd64 (3.75-3+b5) ...
+Setting up libz3-4:amd64 (4.13.3-1) ...
+Setting up ssl-cert (1.1.3) ...
+Setting up libipc-run-perl (20231003.0-2) ...
+Setting up libsensors5:amd64 (1:3.6.2-2) ...
+Setting up libtypes-serialiser-perl (1.01-1) ...
+Setting up libjson-perl (4.10000-1) ...
+Setting up libxslt1.1:amd64 (1.1.35-1.2+deb13u3) ...
+Setting up matrix-synapse-py3 (1.155.0+trixie1) ...
+Created symlink '/etc/systemd/system/multi-user.target.wants/matrix-synapse.service' → '/usr/lib/systemd/system/matrix-synapse.service'.
+Setting up sysstat (12.7.5-2) ...
+Creating config file /etc/default/sysstat with new version
+update-alternatives: using /usr/bin/sar.sysstat to provide /usr/bin/sar (sar) in auto mode
+Created symlink '/etc/systemd/system/sysstat.service.wants/sysstat-collect.timer' → '/usr/lib/systemd/system/sysstat-collect.timer'.
+Created symlink '/etc/systemd/system/sysstat.service.wants/sysstat-rotate.timer' → '/usr/lib/systemd/system/sysstat-rotate.timer'.
+Created symlink '/etc/systemd/system/sysstat.service.wants/sysstat-summary.timer' → '/usr/lib/systemd/system/sysstat-summary.timer'.
+Created symlink '/etc/systemd/system/multi-user.target.wants/sysstat.service' → '/usr/lib/systemd/system/sysstat.service'.
+Setting up postgresql-common-dev (278) ...
+Setting up libjson-xs-perl (4.040-1~deb13u1) ...
+Setting up libllvm19:amd64 (1:19.1.7-3+b1) ...
+Setting up postgresql-client-17 (17.10-0+deb13u1) ...
+update-alternatives: using /usr/share/postgresql/17/man/man1/psql.1.gz to provide /usr/share/man/man1/psql.1.gz (psql.1.gz) in auto mode
+Setting up postgresql-common (278) ...
+Creating config file /etc/postgresql-common/createcluster.conf with new version
+Building PostgreSQL dictionaries from installed myspell/hunspell packages...
+Removing obsolete dictionary files:
+Created symlink '/etc/systemd/system/multi-user.target.wants/postgresql.service' → '/usr/lib/systemd/system/postgresql.service'.
+Setting up postgresql-17 (17.10-0+deb13u1) ...
+Creating new PostgreSQL cluster 17/main ...
+/usr/lib/postgresql/17/bin/initdb -D /var/lib/postgresql/17/main --auth-local peer --auth-host scram-sha-256 --no-instructions
+The files belonging to this database system will be owned by user "postgres".
+This user must also own the server process.
+
+The database cluster will be initialized with locale "C.UTF-8".
+The default database encoding has accordingly been set to "UTF8".
+The default text search configuration will be set to "english".
+
+Data page checksums are disabled.
+
+fixing permissions on existing directory /var/lib/postgresql/17/main ... ok
+creating subdirectories ... ok
+selecting dynamic shared memory implementation ... posix
+selecting default "max_connections" ... 100
+selecting default "shared_buffers" ... 128MB
+selecting default time zone ... Europe/Berlin
+creating configuration files ... ok
+running bootstrap script ... ok
+performing post-bootstrap initialization ... ok
+syncing data to disk ... ok
+Setting up postgresql (17+278) ...
+Processing triggers for man-db (2.13.1-1) ...
+Processing triggers for libc-bin (2.41-12+deb13u3) ...
+Enter Matrix homeserver domain (e.g. matrix.example.com): mikrobee.com
+Enter MAS domain, for well-known discovery only (e.g. auth.example.com): auth.mikrobee.com
+Enter RTC / Element Call domain, for well-known discovery only (e.g. rtc.example.com): rtc.mikrobee.com
+Enable IPv6 binding for Synapse? (y/N): y
+
+Enter PostgreSQL password for 'matrix' user: 
+
+==> Domain     : mikrobee.com
+==> MAS domain : auth.mikrobee.com
+==> RTC domain : rtc.mikrobee.com
+==> IPv6       : y
+
+==> Configuring bind_addresses in homeserver.yaml...
+bind_addresses => IPv4 + IPv6 loopback (::1 and 127.0.0.1)
+==> Appending custom config to homeserver.yaml...
+==> Creating PostgreSQL user and database...
+CREATE ROLE
+CREATE DATABASE
+Would you like to obtain a Let's Encrypt certificate now? [y/N] n
+Would you like to set up the Nginx reverse proxy? [y/N] y
+==> Nginx config written to /etc/nginx/sites-available/mikrobee.com
+Would you like to enable the site (link to sites-enabled)? [y/N] y
+==> Symlink created.
+==> Testing Nginx configuration...
+2026/07/03 09:11:41 [warn] 4644#4644: the "listen ... http2" directive is deprecated, use the "http2" directive instead in /etc/nginx/sites-enabled/mikrobee.com:9
+2026/07/03 09:11:41 [warn] 4644#4644: the "listen ... http2" directive is deprecated, use the "http2" directive instead in /etc/nginx/sites-enabled/mikrobee.com:10
+2026/07/03 09:11:41 [warn] 4644#4644: the "listen ... http2" directive is deprecated, use the "http2" directive instead in /etc/nginx/sites-enabled/mikrobee.com:11
+2026/07/03 09:11:41 [warn] 4644#4644: the "listen ... http2" directive is deprecated, use the "http2" directive instead in /etc/nginx/sites-enabled/mikrobee.com:12
+nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful
+==> Reloading Nginx...
+==> Nginx reloaded.
+==> Restarting matrix-synapse...
+
+================================================================
+ Synapse installation complete!
+  Homeserver: https://mikrobee.com
+
+  IMPORTANT — save this value, MAS setup needs it:
+  matrix_secret = ORhKQEjvCiMfonCoZM9ZvpY/psUFS+Z9oVpShaNjQGrgLXQ/A0M5Nrn2KqgBeUp3
+
+  It has also been saved to (auto-detected by the MAS install script):
+  /var/www/docker/MAS/auth.mikrobee.com/.matrix-secret
+
+  Next: run matrix-authentication-service-install.sh
+        then matrix-element-call-install.sh
+================================================================
+root@vmi3300372:/home/admin/Selfhosting/OpenSource/Matrix# ./scripts/matrix-authentication-service-install.sh 
+Enter MAS domain (e.g. auth.example.com): auth.mikrobee.com
+Enter Matrix homeserver domain (e.g. matrix.example.com): mikrobee.com
+==> Found matrix_secret from Synapse install at /var/www/docker/MAS/auth.mikrobee.com/.matrix-secret
+==> MAS domain      : auth.mikrobee.com
+==> Matrix domain   : mikrobee.com
+
+==> Generating base config.yaml...
+Unable to find image 'ghcr.io/element-hq/matrix-authentication-service:latest' locally
+latest: Pulling from element-hq/matrix-authentication-service
+f237dbba1ce2: Pull complete 
+52630fc75a18: Pull complete 
+dd64bf2dd177: Pull complete 
+cf397222899a: Pull complete 
+8224d91da70b: Pull complete 
+cac2ae0193cb: Pull complete 
+ebddc55facdc: Pull complete 
+1a4be5562d92: Pull complete 
+bdfd7f7e5bf6: Pull complete 
+dd0d9bfd3bee: Pull complete 
+ad42b509883e: Pull complete 
+2d4d7adf6272: Pull complete 
+7cc70dfd88cf: Pull complete 
+b839dfae01f6: Pull complete 
+99515e7b4d35: Pull complete 
+47de5dd0b812: Pull complete 
+99ba982a9142: Pull complete 
+c172f21841df: Pull complete 
+d6b1b89eccac: Pull complete 
+7c12895b777b: Pull complete 
+3214acf345c0: Pull complete 
+bd8962e29291: Pull complete 
+2780920e5dbf: Pull complete 
+241cec0661ba: Download complete 
+Digest: sha256:fb25648b12e985d1192ea3dc7b6def38f97ca79bacba262daca5b82532e3a3dd
+Status: Downloaded newer image for ghcr.io/element-hq/matrix-authentication-service:latest
+2026-07-03T07:12:22.521068Z  INFO mas_config::sections::secrets:351 Generating keys...
+2026-07-03T07:12:22.644882Z  INFO mas_config::sections::secrets:358 Done generating RSA key
+2026-07-03T07:12:22.646006Z  INFO mas_config::sections::secrets:374 Done generating EC P-256 key
+2026-07-03T07:12:22.647067Z  INFO mas_config::sections::secrets:390 Done generating EC P-384 key
+2026-07-03T07:12:22.648801Z  INFO mas_config::sections::secrets:406 Done generating EC secp256k1 key
+2026-07-03T07:12:22.649459Z  INFO mas_cli::commands::config:118 Writing configuration to standard output
+==> Patching config.yaml...
+MAS config.yaml patched successfully
+==> Writing docker-compose.yml...
+Would you like to review/edit config.yaml before starting? [y/N] n
+==> Validating config.yaml...
+2026-07-03T07:12:31.828947Z  INFO mas_cli::commands::config:91 Configuration file looks good
+==> Starting MAS...
+[+] up 18/18
+ ✔ Image postgres:15-alpine           Pulled                                                                                                                                                                                          10.2s
+ ✔ Network authmikrobeecom_default    Created                                                                                                                                                                                          0.1s
+ ✔ Volume authmikrobeecom_mas_db_data Created                                                                                                                                                                                          0.0s
+ ✔ Container authmikrobeecom-db-1     Healthy                                                                                                                                                                                          6.7s
+ ✔ Container matrix-auth-service      Started                                                                                                                                                                                          6.5s
+==> Containers started.
+
+Would you like to obtain a Let's Encrypt certificate now? [y/N] n
+Would you like to set up the Nginx reverse proxy? [y/N] y
+==> Nginx config written to /etc/nginx/sites-available/auth.mikrobee.com
+Would you like to enable the site (link to sites-enabled)? [y/N] y
+==> Symlink created.
+==> Testing Nginx configuration...
+2026/07/03 09:13:07 [warn] 5463#5463: the "listen ... http2" directive is deprecated, use the "http2" directive instead in /etc/nginx/sites-enabled/auth.mikrobee.com:9
+2026/07/03 09:13:07 [warn] 5463#5463: the "listen ... http2" directive is deprecated, use the "http2" directive instead in /etc/nginx/sites-enabled/auth.mikrobee.com:10
+2026/07/03 09:13:07 [warn] 5463#5463: the "listen ... http2" directive is deprecated, use the "http2" directive instead in /etc/nginx/sites-enabled/mikrobee.com:9
+2026/07/03 09:13:07 [warn] 5463#5463: the "listen ... http2" directive is deprecated, use the "http2" directive instead in /etc/nginx/sites-enabled/mikrobee.com:10
+2026/07/03 09:13:07 [warn] 5463#5463: the "listen ... http2" directive is deprecated, use the "http2" directive instead in /etc/nginx/sites-enabled/mikrobee.com:11
+2026/07/03 09:13:07 [warn] 5463#5463: the "listen ... http2" directive is deprecated, use the "http2" directive instead in /etc/nginx/sites-enabled/mikrobee.com:12
+nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful
+==> Reloading Nginx...
+==> Nginx reloaded.
+
+================================================================
+ MAS installation complete!
+  MAS: https://auth.mikrobee.com
+
+  Auto-generated Postgres password for MAS's docker db (mas_password):
+  qDU3/7QuvdNgmiCq4AUr/DcHO4RWBxoTuJULzDZOP/w=
+  (already saved in docker-compose.yml and config.yaml — only needed
+   again for manual psql access to that container)
+
+  To create the first user:
+  cd /var/www/docker/MAS/auth.mikrobee.com
+  docker compose exec matrix-auth-service mas-cli manage register-user
+
+  Next: run matrix-element-call-install.sh
+================================================================
+root@vmi3300372:/home/admin/Selfhosting/OpenSource/Matrix# ./scripts/matrix-element-call-install.sh 
+Enter RTC / Element Call backend domain (e.g. rtc.example.com): rtc.mikrobee.com
+==> RTC domain : rtc.mikrobee.com
+
+==> Detecting public IP...
+==> Public IP: 157.173.109.223
+==> Writing livekit.yaml...
+==> Writing docker-compose.yml...
+Open LiveKit firewall ports via ufw (7881/tcp, 7882/udp, 50100-50200/udp)? [y/N] y
+Rules updated
+Rules updated (v6)
+Rules updated
+Rules updated (v6)
+Rules updated
+Rules updated (v6)
+==> Starting Element Call backend...
+[+] up 12/12
+ ✔ Image livekit/livekit-server:latest            Pulled                                                                                                                                                                               4.8s
+ ✔ Image ghcr.io/element-hq/lk-jwt-service:latest Pulled                                                                                                                                                                               3.6s
+ ✔ Network rtcmikrobeecom_default                 Created                                                                                                                                                                              0.1s
+ ✔ Container lk-jwt-service                       Started                                                                                                                                                                              0.7s
+ ✔ Container livekit-sfu                          Started                                                                                                                                                                              0.6s
+==> Containers started.
+
+Would you like to obtain a Let's Encrypt certificate now? [y/N] n
+Would you like to set up the Nginx reverse proxy? [y/N] y
+==> Nginx config written to /etc/nginx/sites-available/rtc.mikrobee.com
+Would you like to enable the site (link to sites-enabled)? [y/N] y
+==> Symlink created.
+==> Testing Nginx configuration...
+2026/07/03 09:14:27 [warn] 6481#6481: the "listen ... http2" directive is deprecated, use the "http2" directive instead in /etc/nginx/sites-enabled/auth.mikrobee.com:9
+2026/07/03 09:14:27 [warn] 6481#6481: the "listen ... http2" directive is deprecated, use the "http2" directive instead in /etc/nginx/sites-enabled/auth.mikrobee.com:10
+2026/07/03 09:14:27 [warn] 6481#6481: the "listen ... http2" directive is deprecated, use the "http2" directive instead in /etc/nginx/sites-enabled/mikrobee.com:9
+2026/07/03 09:14:27 [warn] 6481#6481: the "listen ... http2" directive is deprecated, use the "http2" directive instead in /etc/nginx/sites-enabled/mikrobee.com:10
+2026/07/03 09:14:27 [warn] 6481#6481: the "listen ... http2" directive is deprecated, use the "http2" directive instead in /etc/nginx/sites-enabled/mikrobee.com:11
+2026/07/03 09:14:27 [warn] 6481#6481: the "listen ... http2" directive is deprecated, use the "http2" directive instead in /etc/nginx/sites-enabled/mikrobee.com:12
+2026/07/03 09:14:27 [warn] 6481#6481: the "listen ... http2" directive is deprecated, use the "http2" directive instead in /etc/nginx/sites-enabled/rtc.mikrobee.com:9
+2026/07/03 09:14:27 [warn] 6481#6481: the "listen ... http2" directive is deprecated, use the "http2" directive instead in /etc/nginx/sites-enabled/rtc.mikrobee.com:10
+nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful
+==> Reloading Nginx...
+==> Nginx reloaded.
+
+================================================================
+ Element Call backend installation complete!
+  RTC backend: https://rtc.mikrobee.com
+
+  Make sure Synapse's well-known client JSON (written by
+  matrix-synapse-install.sh) points org.matrix.msc4143.rtc_foci at
+  https://rtc.mikrobee.com/livekit/jwt
+================================================================
+root@vmi3300372:/home/admin/Selfhosting/OpenSource/Matrix# cd /var/www/docker/MAS/auth.mikrobee.com
+root@vmi3300372:/var/www/docker/MAS/auth.mikrobee.com# docker compose exec matrix-auth-service mas-cli manage register-user
+Error: could not connect to the database
+
+Caused by:
+    0: error communicating with database: Connection refused (os error 111)
+    1: Connection refused (os error 111)
+root@vmi3300372:/var/www/docker/MAS/auth.mikrobee.com# docker compose ps
+NAME                   IMAGE                                                     COMMAND                  SERVICE               CREATED         STATUS                   PORTS
+authmikrobeecom-db-1   postgres:15-alpine                                        "docker-entrypoint.s…"   db                    3 minutes ago   Up 3 minutes (healthy)   5432/tcp
+matrix-auth-service    ghcr.io/element-hq/matrix-authentication-service:latest   "/usr/local/bin/mas-…"   matrix-auth-service   3 minutes ago   Up 28 seconds            0.0.0.0:8086->8080/tcp, [::]:8086->8080/tcp
+root@vmi3300372:/var/www/docker/MAS/auth.mikrobee.com# docker compose ps
+NAME                   IMAGE                                                     COMMAND                  SERVICE               CREATED         STATUS                   PORTS
+authmikrobeecom-db-1   postgres:15-alpine                                        "docker-entrypoint.s…"   db                    3 minutes ago   Up 3 minutes (healthy)   5432/tcp
+matrix-auth-service    ghcr.io/element-hq/matrix-authentication-service:latest   "/usr/local/bin/mas-…"   matrix-auth-service   3 minutes ago   Up 8 seconds             0.0.0.0:8086->8080/tcp, [::]:8086->8080/tcp
+root@vmi3300372:/var/www/docker/MAS/auth.mikrobee.com# docker compose logs db
+db-1  | The files belonging to this database system will be owned by user "postgres".
+db-1  | This user must also own the server process.
+db-1  | 
+db-1  | The database cluster will be initialized with locale "en_US.utf8".
+db-1  | The default database encoding has accordingly been set to "UTF8".
+db-1  | The default text search configuration will be set to "english".
+db-1  | 
+db-1  | Data page checksums are disabled.
+db-1  | 
+db-1  | fixing permissions on existing directory /var/lib/postgresql/data ... ok
+db-1  | creating subdirectories ... ok
+db-1  | selecting dynamic shared memory implementation ... posix
+db-1  | selecting default max_connections ... 100
+db-1  | selecting default shared_buffers ... 128MB
+db-1  | selecting default time zone ... UTC
+db-1  | creating configuration files ... ok
+db-1  | running bootstrap script ... ok
+db-1  | sh: locale: not found
+db-1  | 2026-07-03 07:12:44.781 UTC [35] WARNING:  no usable system locales were found
+db-1  | performing post-bootstrap initialization ... ok
+db-1  | syncing data to disk ... ok
+db-1  | initdb: warning: enabling "trust" authentication for local connections
+db-1  | initdb: hint: You can change this by editing pg_hba.conf or using the option -A, or --auth-local and --auth-host, the next time you run initdb.
+db-1  | 
+db-1  | 
+db-1  | Success. You can now start the database server using:
+db-1  | 
+db-1  |     pg_ctl -D /var/lib/postgresql/data -l logfile start
+db-1  | 
+db-1  | waiting for server to start....2026-07-03 07:12:45.854 UTC [41] LOG:  starting PostgreSQL 15.18 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit
+db-1  | 2026-07-03 07:12:45.858 UTC [41] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+db-1  | 2026-07-03 07:12:45.868 UTC [44] LOG:  database system was shut down at 2026-07-03 07:12:45 UTC
+db-1  | 2026-07-03 07:12:45.882 UTC [41] LOG:  database system is ready to accept connections
+db-1  |  done
+db-1  | server started
+db-1  | CREATE DATABASE
+db-1  | 
+db-1  | 
+db-1  | /usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*
+db-1  | 
+db-1  | waiting for server to shut down....2026-07-03 07:12:46.038 UTC [41] LOG:  received fast shutdown request
+db-1  | 2026-07-03 07:12:46.042 UTC [41] LOG:  aborting any active transactions
+db-1  | 2026-07-03 07:12:46.046 UTC [41] LOG:  background worker "logical replication launcher" (PID 47) exited with exit code 1
+db-1  | 2026-07-03 07:12:46.047 UTC [42] LOG:  shutting down
+db-1  | 2026-07-03 07:12:46.050 UTC [42] LOG:  checkpoint starting: shutdown immediate
+db-1  | 2026-07-03 07:12:46.121 UTC [42] LOG:  checkpoint complete: wrote 922 buffers (5.6%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.030 s, sync=0.031 s, total=0.075 s; sync files=301, longest=0.003 s, average=0.001 s; distance=4249 kB, estimate=4249 kB
+db-1  | 2026-07-03 07:12:46.134 UTC [41] LOG:  database system is shut down
+db-1  |  done
+db-1  | server stopped
+db-1  | 
+db-1  | PostgreSQL init process complete; ready for start up.
+db-1  | 
+db-1  | 2026-07-03 07:12:46.172 UTC [1] LOG:  starting PostgreSQL 15.18 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit
+db-1  | 2026-07-03 07:12:46.172 UTC [1] LOG:  listening on IPv4 address "0.0.0.0", port 5432
+db-1  | 2026-07-03 07:12:46.173 UTC [1] LOG:  listening on IPv6 address "::", port 5432
+db-1  | 2026-07-03 07:12:46.181 UTC [1] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+db-1  | 2026-07-03 07:12:46.195 UTC [57] LOG:  database system was shut down at 2026-07-03 07:12:46 UTC
+db-1  | 2026-07-03 07:12:46.203 UTC [1] LOG:  database system is ready to accept connections
+root@vmi3300372:/var/www/docker/MAS/auth.mikrobee.com# ls
+config.yaml  docker-compose.yml
+root@vmi3300372:/var/www/docker/MAS/auth.mikrobee.com# docker compose logs -f
+matrix-auth-service  | 2026-07-03T07:12:49.885761Z  INFO mas_cli::commands::server:62 Starting up version="v1.19.0"
+matrix-auth-service  | 2026-07-03T07:12:49.885833Z  INFO mas_cli::commands::server:71 Connecting to the database
+matrix-auth-service  | Error: could not connect to the database
+matrix-auth-service  | 
+matrix-auth-service  | Caused by:
+matrix-auth-service  |     pool timed out while waiting for an open connection
+matrix-auth-service  | 2026-07-03T07:13:20.435305Z  INFO mas_cli::commands::server:62 Starting up version="v1.19.0"
+matrix-auth-service  | 2026-07-03T07:13:20.435364Z  INFO mas_cli::commands::server:71 Connecting to the database
+matrix-auth-service  | Error: could not connect to the database
+matrix-auth-service  | 
+matrix-auth-service  | Caused by:
+matrix-auth-service  |     pool timed out while waiting for an open connection
+matrix-auth-service  | 2026-07-03T07:13:51.138845Z  INFO mas_cli::commands::server:62 Starting up version="v1.19.0"
+matrix-auth-service  | 2026-07-03T07:13:51.138915Z  INFO mas_cli::commands::server:71 Connecting to the database
+matrix-auth-service  | Error: could not connect to the database
+matrix-auth-service  | 
+matrix-auth-service  | Caused by:
+matrix-auth-service  |     pool timed out while waiting for an open connection
+matrix-auth-service  | 2026-07-03T07:14:21.888490Z  INFO mas_cli::commands::server:62 Starting up version="v1.19.0"
+matrix-auth-service  | 2026-07-03T07:14:21.888553Z  INFO mas_cli::commands::server:71 Connecting to the database
+matrix-auth-service  | Error: could not connect to the database
+matrix-auth-service  | 
+matrix-auth-service  | Caused by:
+matrix-auth-service  |     pool timed out while waiting for an open connection
+matrix-auth-service  | 2026-07-03T07:14:52.680360Z  INFO mas_cli::commands::server:62 Starting up version="v1.19.0"
+matrix-auth-service  | 2026-07-03T07:14:52.680413Z  INFO mas_cli::commands::server:71 Connecting to the database
+matrix-auth-service  | Error: could not connect to the database
+matrix-auth-service  | 
+matrix-auth-service  | Caused by:
+matrix-auth-service  |     pool timed out while waiting for an open connection
+matrix-auth-service  | 2026-07-03T07:15:23.478819Z  INFO mas_cli::commands::server:62 Starting up version="v1.19.0"
+matrix-auth-service  | 2026-07-03T07:15:23.478892Z  INFO mas_cli::commands::server:71 Connecting to the database
+matrix-auth-service  | Error: could not connect to the database
+matrix-auth-service  | 
+matrix-auth-service  | Caused by:
+matrix-auth-service  |     pool timed out while waiting for an open connection
+matrix-auth-service  | 2026-07-03T07:15:54.231663Z  INFO mas_cli::commands::server:62 Starting up version="v1.19.0"
+matrix-auth-service  | 2026-07-03T07:15:54.231706Z  INFO mas_cli::commands::server:71 Connecting to the database
+matrix-auth-service  | Error: could not connect to the database
+matrix-auth-service  | 
+matrix-auth-service  | Caused by:
+matrix-auth-service  |     pool timed out while waiting for an open connection
+matrix-auth-service  | 2026-07-03T07:16:24.839776Z  INFO mas_cli::commands::server:62 Starting up version="v1.19.0"
+matrix-auth-service  | 2026-07-03T07:16:24.839836Z  INFO mas_cli::commands::server:71 Connecting to the database
+db-1                 | The files belonging to this database system will be owned by user "postgres".
+db-1                 | This user must also own the server process.
+db-1                 | 
+db-1                 | The database cluster will be initialized with locale "en_US.utf8".
+db-1                 | The default database encoding has accordingly been set to "UTF8".
+db-1                 | The default text search configuration will be set to "english".
+db-1                 | 
+db-1                 | Data page checksums are disabled.
+db-1                 | 
+db-1                 | fixing permissions on existing directory /var/lib/postgresql/data ... ok
+db-1                 | creating subdirectories ... ok
+db-1                 | selecting dynamic shared memory implementation ... posix
+db-1                 | selecting default max_connections ... 100
+db-1                 | selecting default shared_buffers ... 128MB
+db-1                 | selecting default time zone ... UTC
+db-1                 | creating configuration files ... ok
+db-1                 | running bootstrap script ... ok
+db-1                 | sh: locale: not found
+db-1                 | 2026-07-03 07:12:44.781 UTC [35] WARNING:  no usable system locales were found
+db-1                 | performing post-bootstrap initialization ... ok
+db-1                 | syncing data to disk ... ok
+db-1                 | initdb: warning: enabling "trust" authentication for local connections
+db-1                 | initdb: hint: You can change this by editing pg_hba.conf or using the option -A, or --auth-local and --auth-host, the next time you run initdb.
+db-1                 | 
+db-1                 | 
+db-1                 | Success. You can now start the database server using:
+db-1                 | 
+db-1                 |     pg_ctl -D /var/lib/postgresql/data -l logfile start
+db-1                 | 
+db-1                 | waiting for server to start....2026-07-03 07:12:45.854 UTC [41] LOG:  starting PostgreSQL 15.18 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit
+db-1                 | 2026-07-03 07:12:45.858 UTC [41] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+db-1                 | 2026-07-03 07:12:45.868 UTC [44] LOG:  database system was shut down at 2026-07-03 07:12:45 UTC
+db-1                 | 2026-07-03 07:12:45.882 UTC [41] LOG:  database system is ready to accept connections
+db-1                 |  done
+db-1                 | server started
+db-1                 | CREATE DATABASE
+db-1                 | 
+db-1                 | 
+db-1                 | /usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*
+db-1                 | 
+db-1                 | waiting for server to shut down....2026-07-03 07:12:46.038 UTC [41] LOG:  received fast shutdown request
+db-1                 | 2026-07-03 07:12:46.042 UTC [41] LOG:  aborting any active transactions
+db-1                 | 2026-07-03 07:12:46.046 UTC [41] LOG:  background worker "logical replication launcher" (PID 47) exited with exit code 1
+db-1                 | 2026-07-03 07:12:46.047 UTC [42] LOG:  shutting down
+db-1                 | 2026-07-03 07:12:46.050 UTC [42] LOG:  checkpoint starting: shutdown immediate
+db-1                 | 2026-07-03 07:12:46.121 UTC [42] LOG:  checkpoint complete: wrote 922 buffers (5.6%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.030 s, sync=0.031 s, total=0.075 s; sync files=301, longest=0.003 s, average=0.001 s; distance=4249 kB, estimate=4249 kB
+db-1                 | 2026-07-03 07:12:46.134 UTC [41] LOG:  database system is shut down
+db-1                 |  done
+db-1                 | server stopped
+db-1                 | 
+db-1                 | PostgreSQL init process complete; ready for start up.
+db-1                 | 
+db-1                 | 2026-07-03 07:12:46.172 UTC [1] LOG:  starting PostgreSQL 15.18 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit
+db-1                 | 2026-07-03 07:12:46.172 UTC [1] LOG:  listening on IPv4 address "0.0.0.0", port 5432
+db-1                 | 2026-07-03 07:12:46.173 UTC [1] LOG:  listening on IPv6 address "::", port 5432
+db-1                 | 2026-07-03 07:12:46.181 UTC [1] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+db-1                 | 2026-07-03 07:12:46.195 UTC [57] LOG:  database system was shut down at 2026-07-03 07:12:46 UTC
+db-1                 | 2026-07-03 07:12:46.203 UTC [1] LOG:  database system is ready to accept connections
+matrix-auth-service  | Error: could not connect to the database
+matrix-auth-service  | 
+matrix-auth-service  | Caused by:
+matrix-auth-service  |     pool timed out while waiting for an open connection
+matrix-auth-service exited with code 1 (restarting)
+matrix-auth-service  | 2026-07-03T07:16:55.860658Z  INFO mas_cli::commands::server:62 Starting up version="v1.19.0"
+matrix-auth-service  | 2026-07-03T07:16:55.860728Z  INFO mas_cli::commands::server:71 Connecting to the database
+^C
+root@vmi3300372:/var/www/docker/MAS/auth.mikrobee.com# docker compose exec matrix-auth-service nc -zv db 5432
+OCI runtime exec failed: exec failed: unable to start container process: exec: "nc": executable file not found in $PATH
