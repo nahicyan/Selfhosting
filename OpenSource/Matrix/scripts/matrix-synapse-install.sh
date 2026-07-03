@@ -56,6 +56,28 @@ reg_secret=$(openssl rand -base64 48)
 matrix_secret=$(openssl rand -base64 48)
 
 # ── Configure Synapse bind address ──────────────────────────────────────────────
+# WHY 0.0.0.0 AND NOT 127.0.0.1:
+#   MAS runs in a Docker container and reaches Synapse via host.docker.internal,
+#   which resolves to the Docker bridge gateway IP (e.g. 172.18.0.1) — NOT
+#   127.0.0.1. A loopback-only bind means Synapse never sees that connection at
+#   all (no listening socket on the bridge-facing interface), which surfaces as
+#   "Connection refused" from inside the MAS container even though Synapse
+#   itself is perfectly healthy. Synapse's own reverse_proxy.md warns about
+#   exactly this: "Do not change bind_addresses to 127.0.0.1 when using a
+#   containerized Synapse, as that will prevent it from responding to proxied
+#   traffic." Since this now listens on all interfaces, it's locked back down
+#   with a ufw rule below — nginx (loopback) and MAS (Docker bridge range) are
+#   the only intended callers.
+#
+# WHY THE ADDRESSES ARE QUOTED ('0.0.0.0' / '::') AND NOT BARE:
+#   A bare, unquoted "::" is a YAML edge case — a plain scalar consisting of
+#   nothing but colons gets misparsed as a mapping (observed in production as
+#   bind_addresses becoming [{':': None}, '0.0.0.0'], which crashes Synapse's
+#   listener startup with ListenerException). The original default "::1"
+#   never hit this because the trailing "1" makes it unambiguous; the bare
+#   wildcard address "::" does not. Quoting is always valid for the IPv4
+#   address too, so both are quoted uniformly rather than special-casing IPv6.
+#
 # WHY PYTHON INSTEAD OF SED:
 #   The current Synapse Debian package generates bind_addresses in YAML block
 #   style (each address on its own "- " line), NOT the old inline flow style.
@@ -67,6 +89,15 @@ matrix_secret=$(openssl rand -base64 48)
 #     bind_addresses:
 #     - ::1
 #     - 127.0.0.1
+#
+# WHY THE "CHANGED"/"UNCHANGED" CHECK BELOW:
+#   A regex that matches zero times still exits 0 — a silent no-op that looks
+#   identical to success in the script's own output, and was previously
+#   mistaken for success for several debugging round-trips. The patch itself
+#   now reports whether it actually changed anything, and the script aborts
+#   immediately if it didn't. This check only proves the substitution *ran* —
+#   it does NOT prove the result is valid YAML (that's what the separate
+#   validation step further down is for, after both patches to this file).
 echo "==> Configuring bind_addresses in homeserver.yaml..."
 if [[ "${want_ipv6,,}" == "y" ]]; then
   sudo tee /tmp/set_bind_ipv6.py > /dev/null << 'PYEOF'
@@ -77,12 +108,15 @@ def repl(m):
     existing = m.group(2)
     first    = existing.split('\n')[0]
     indent   = first[:len(first) - len(first.lstrip())]
-    return m.group(1) + indent + '- ::1\n' + indent + '- 127.0.0.1\n'
-txt = re.sub(r'(bind_addresses:\n)((?:[ \t]*-[ \t]+\S+\n)+)', repl, txt)
-open(path,'w').write(txt)
-print('bind_addresses => IPv4 + IPv6 loopback (::1 and 127.0.0.1)')
+    return m.group(1) + indent + "- '::'\n" + indent + "- '0.0.0.0'\n"
+new_txt = re.sub(r'(bind_addresses:\n)((?:[ \t]*-[ \t]+\S+\n)+)', repl, txt)
+if new_txt == txt:
+    print('UNCHANGED')
+else:
+    open(path, 'w').write(new_txt)
+    print('CHANGED')
 PYEOF
-  sudo python3 /tmp/set_bind_ipv6.py
+  bind_result=$(sudo python3 /tmp/set_bind_ipv6.py)
 else
   sudo tee /tmp/set_bind_ipv4.py > /dev/null << 'PYEOF'
 import re
@@ -94,12 +128,40 @@ def repl(m):
     existing = m.group(2)
     first    = existing.split('\n')[0]
     indent   = first[:len(first) - len(first.lstrip())]
-    return m.group(1) + indent + '- 127.0.0.1\n'
-txt = re.sub(r'(bind_addresses:\n)((?:[ \t]*-[ \t]+\S+\n)+)', repl, txt)
-open(path,'w').write(txt)
-print('bind_addresses => IPv4 loopback only (127.0.0.1)')
+    return m.group(1) + indent + "- '0.0.0.0'\n"
+new_txt = re.sub(r'(bind_addresses:\n)((?:[ \t]*-[ \t]+\S+\n)+)', repl, txt)
+if new_txt == txt:
+    print('UNCHANGED')
+else:
+    open(path, 'w').write(new_txt)
+    print('CHANGED')
 PYEOF
-  sudo python3 /tmp/set_bind_ipv4.py
+  bind_result=$(sudo python3 /tmp/set_bind_ipv4.py)
+fi
+
+if [[ "$bind_result" != "CHANGED" ]]; then
+  echo "ERROR: bind_addresses substitution matched nothing in homeserver.yaml —"
+  echo "       Synapse's listeners block doesn't have the expected shape (or"
+  echo "       this install already had a non-default one). Refusing to"
+  echo "       continue with a config that's still loopback-only, since MAS"
+  echo "       would silently fail to reach Synapse later. Inspect"
+  echo "       /etc/matrix-synapse/homeserver.yaml's listeners[].bind_addresses"
+  echo "       manually."
+  exit 1
+fi
+echo "==> bind_addresses now listens on all interfaces (0.0.0.0$([[ "${want_ipv6,,}" == "y" ]] && echo " + ::"))."
+
+# ── Firewall: port 8008 must not be reachable from the public internet ─────────
+# It's now bound to 0.0.0.0 so MAS (in Docker) can reach it, but it's plain
+# HTTP with no auth of its own — nginx (loopback) and MAS (Docker bridge) are
+# the only callers that should ever reach it directly.
+read -rp "Restrict port 8008 to localhost + Docker's bridge range via ufw? Recommended. [Y/n] " ans_fw8008
+ans_fw8008="${ans_fw8008:-Y}"
+if [[ "$ans_fw8008" =~ ^[Yy]$ ]]; then
+  sudo ufw allow from 127.0.0.1 to any port 8008 proto tcp comment "Synapse client API - nginx (localhost)"
+  sudo ufw allow from 172.16.0.0/12 to any port 8008 proto tcp comment "Synapse client API - Docker bridge (MAS)"
+  sudo ufw deny 8008/tcp comment "Synapse client API - block public internet"
+  echo "==> ufw: port 8008 restricted to localhost + 172.16.0.0/12 (Docker's default bridge range)."
 fi
 
 # ── Append custom config to homeserver.yaml ─────────────────────────────────────
@@ -179,6 +241,22 @@ rc_delayed_event_mgmt:
   per_second: 1
   burst_count: 20
 SYNEOF
+
+# ── Validate homeserver.yaml before doing anything else with it ────────────────
+# Confirms the file is actually valid YAML before we invest in postgres/nginx
+# setup and finally restart the service on it. This is the check that would
+# have caught the '::' bug above immediately with a clear message, instead of
+# writing broken syntax that only surfaced as a cryptic ListenerException from
+# journalctl after everything else had already run. Uses Synapse's own venv
+# python — guaranteed to have PyYAML, since Synapse needs it to parse this
+# same file — rather than assuming the system python3 has it installed.
+echo "==> Validating homeserver.yaml..."
+if ! sudo /opt/venvs/matrix-synapse/bin/python -c "import yaml; yaml.safe_load(open('/etc/matrix-synapse/homeserver.yaml'))" 2>/tmp/synapse_yaml_check_err; then
+  echo "ERROR: /etc/matrix-synapse/homeserver.yaml is not valid YAML:"
+  cat /tmp/synapse_yaml_check_err
+  exit 1
+fi
+echo "==> homeserver.yaml parses cleanly."
 
 # ── PostgreSQL: create Synapse user and database ────────────────────────────────
 # IMPORTANT: Synapse requires LC_COLLATE='C' and LC_CTYPE='C'.
