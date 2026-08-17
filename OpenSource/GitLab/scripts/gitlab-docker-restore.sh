@@ -176,16 +176,37 @@ fi
 
 # ── 8. Copy the archive into the backups volume ───────────────────────────────
 # gitlab-backup restore only looks inside /var/opt/gitlab/backups (bind-mounted
-# at ./data/backups on the host) and expects ownership by the container's git user.
+# at ./data/backups on the host) and unpacks it as the container's unprivileged
+# "git" user. This script is typically run as root, so the copy lands root-owned
+# — chown it inside the container (by name, so the host-side UID doesn't matter)
+# or "tar: ...: Cannot open: Permission denied" aborts the restore.
 BACKUP_FILENAME=$(basename "$SELECTED_TAR")
 cp -f "$SELECTED_TAR" "$SELECTED_PATH/data/backups/$BACKUP_FILENAME"
+docker compose exec -T gitlab chown git:git "/var/opt/gitlab/backups/$BACKUP_FILENAME"
 BACKUP_ID="${BACKUP_FILENAME%_gitlab_backup.tar}"
 
 # ── 9. Stop services that write to the data being restored ───────────────────
+# gitlab-ctl stop waits only a short, fixed time for the service to go down and
+# returns non-zero if it's still draining (puma in particular can take a while
+# under load) — under set -e that would kill the whole script before sidekiq is
+# even touched, forcing a full re-run from the top. Retry instead of treating a
+# slow-but-in-progress shutdown as fatal.
+stop_service() {
+  local svc="$1" attempt=1 max_attempts=10
+  until docker compose exec -T gitlab gitlab-ctl stop "$svc"; do
+    if [ "$attempt" -ge "$max_attempts" ]; then
+      echo "ERROR: '$svc' did not stop after $attempt attempts. Aborting — nothing has been restored yet."
+      exit 1
+    fi
+    echo "  ...'$svc' is still shutting down, retrying ($attempt/$max_attempts)..."
+    attempt=$((attempt + 1))
+  done
+}
+
 echo ""
 echo "Stopping puma and sidekiq (repositories/database must be quiescent during restore)..."
-docker compose exec -T gitlab gitlab-ctl stop puma
-docker compose exec -T gitlab gitlab-ctl stop sidekiq
+stop_service puma
+stop_service sidekiq
 
 # ── 10. Perform restore ────────────────────────────────────────────────────────
 echo ""
@@ -197,6 +218,30 @@ docker compose exec -T gitlab gitlab-backup restore BACKUP="$BACKUP_ID" force=ye
 echo ""
 echo "Restarting GitLab..."
 docker compose exec -T gitlab gitlab-ctl restart
+
+# gitlab-ctl restart returns as soon as each process is spawned, not once Puma/
+# Workhorse/Sidekiq have finished booting Rails — running gitlab:check right
+# after it hits that boot window and reports false failures ("Internal API
+# unreachable", "Sidekiq: Running? no") that look like the restore broke
+# something when it didn't. Wait for the readiness endpoint first.
+echo "Waiting for GitLab to finish booting..."
+ready=false
+for _ in $(seq 1 30); do
+  if docker compose exec -T gitlab curl -sf -o /dev/null http://localhost/-/readiness; then
+    ready=true
+    break
+  fi
+  sleep 5
+done
+
+if [ "$ready" = true ]; then
+  echo "GitLab is up."
+else
+  echo "WARNING: GitLab didn't report ready within 150s — it may still be booting."
+  echo "         The checks below may show transient failures; re-run"
+  echo "         'docker compose exec gitlab gitlab-rake gitlab:check SANITIZE=true' shortly if so."
+fi
+
 docker compose exec -T gitlab gitlab-rake gitlab:check SANITIZE=true || true
 
 echo ""
