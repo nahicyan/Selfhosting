@@ -68,7 +68,10 @@ You'll be prompted for:
 - **Admin username / password** — blank password generates a strong one and
   prints it
 - **PostgreSQL username / password** — same
-- **Image tags** — Keycloak (default `latest`) and PostgreSQL (default `16`)
+- **Image tags** — Keycloak (default `latest`) and PostgreSQL (default `16`).
+  The Postgres tag also decides where the data volume mounts, so a floating tag
+  (`latest`, `alpine`, `bookworm`) is resolved to a major version by asking the
+  image before the compose file is written
 - **Custom theme** — optional; creates `themes/<name>/` and mounts it read-only
   (see [`Theme.md`](keycloak-production-docker-compose/Theme.md))
 
@@ -157,7 +160,7 @@ version has a few things that don't hold up in production:
 | Upstream                                   | Generated                                            | Why |
 |--------------------------------------------|------------------------------------------------------|-----|
 | `ports: "8090:8080"`                        | `"127.0.0.1:${KEYCLOAK_PORT:-8090}:8080"`            | The short form binds `0.0.0.0`, publishing Keycloak over plain HTTP next to the TLS vhost — a login page reachable without encryption |
-| `postgres_data:/var/lib/postgresql`         | `postgres_data:/var/lib/postgresql/data`             | The image declares its own `VOLUME /var/lib/postgresql/data`. Mounting the *parent* leaves the real data in an anonymous volume that a `docker compose down` orphans and the next `up` replaces with an empty one |
+| `postgres_data:/var/lib/postgresql`         | mount point resolved from the chosen tag             | The right path depends on the major version. `<= 17`: `/var/lib/postgresql/data`, since mounting the *parent* leaves the real data in the image's own anonymous volume, which a `down` orphans and the next `up` replaces empty. `>= 18`: `/var/lib/postgresql`, and those images **refuse to start** if anything sits at the old path. The installer asks the image which it is |
 | `postgres:latest`, `keycloak:latest`        | `${POSTGRES_IMAGE_TAG:-16}`, `${KEYCLOAK_IMAGE_TAG:-latest}` | A `pull` that crosses a Postgres major version leaves the server refusing to start on the old data directory |
 | `KEYCLOAK_ADMIN` only                       | `KEYCLOAK_ADMIN*` **and** `KC_BOOTSTRAP_ADMIN_*`     | Keycloak 26 replaced the first pair with the second. With a floating tag, setting only one means the bootstrap admin silently never gets created |
 | `depends_on: [keycloak_postgres]`           | `condition: service_healthy` + `pg_isready` healthcheck | The short form waits for the container to *start*, not for Postgres to accept connections, so Keycloak can race it on boot |
@@ -256,6 +259,12 @@ Postgres is a different story: bumping `POSTGRES_IMAGE_TAG` across a major
 version will **not** start on an existing data directory. Dump with the backup
 script, change the tag, remove the volume, start fresh, restore.
 
+Crossing 17 → 18 changes the mount point as well — 18+ keeps data in
+`/var/lib/postgresql/<major>/docker` and expects the single mount at
+`/var/lib/postgresql` — so the `volumes:` line has to change with the tag. A
+fresh install picks the right one for you; an existing instance needs the edit
+by hand.
+
 ## Useful commands
 
 Run from `/var/www/docker/keycloak/<domain>/`:
@@ -287,6 +296,25 @@ $DC exec keycloak_postgres psql -U "$POSTGRES_USER" keycloak
 - **Container shows `unhealthy` but Keycloak works** — the healthcheck probes
   `/health/ready` on the management port via bash's `/dev/tcp`. Nothing depends
   on it; drop the `healthcheck:` block if a future image changes that endpoint.
+- **Postgres dies at boot with `Error: in 18+, these Docker images are
+  configured to store database data in a format which is compatible with
+  "pg_ctlcluster"`, and Compose reports `dependency failed to start: container
+  ... is unhealthy`** — the volume is mounted at `/var/lib/postgresql/data`
+  while the image is PostgreSQL 18 or newer (`postgres:latest` is 18). Fix the
+  tag or the mount, then recreate the volume — nothing was ever initialised in
+  it, so there is no data to lose:
+
+  ```bash
+  cd /var/www/docker/keycloak/<domain>
+  DC="docker compose --env-file .env -f docker-compose.external-cert.yml"
+  $DC down
+  docker volume rm <project>_postgres_data     # docker volume ls to confirm the name
+  # then either pin the tag back:
+  #   POSTGRES_IMAGE_TAG=17   in .env
+  # or keep 18+ and change the compose line to:
+  #   - postgres_data:/var/lib/postgresql
+  $DC up -d
+  ```
 - **Backup skips realm JSON** — the admin token request failed. Check that
   `https://<domain>` resolves from the host itself and that
   `KEYCLOAK_USER`/`KEYCLOAK_PASSWORD` in `.env` still match the current admin.

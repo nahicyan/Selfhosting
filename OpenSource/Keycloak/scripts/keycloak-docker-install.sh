@@ -328,6 +328,39 @@ if [[ -z "$pg_tag" ]]; then
   pg_tag="${pg_tag:-$DEFAULT_PG_TAG}"
 fi
 
+# ── PostgreSQL data layout ────────────────────────────────────────────────────
+# Where the data volume mounts depends on the Postgres major version, and the
+# wrong choice is a hard start-up failure rather than a warning (see the comment
+# in the generated compose file). A numeric tag answers the question directly;
+# a floating one (latest, alpine, bookworm) has to be asked of the image.
+pg_major=""
+if [[ "$pg_tag" =~ ^([0-9]+) ]]; then
+  pg_major="${BASH_REMATCH[1]}"
+else
+  echo ""
+  echo "==> Resolving the major version behind 'postgres:$pg_tag'..."
+  docker pull "postgres:$pg_tag" >/dev/null 2>&1 || true
+  pg_major="$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' \
+    "postgres:$pg_tag" 2>/dev/null | sed -n 's/^PG_MAJOR=\([0-9]\+\).*/\1/p' | head -n1 || true)"
+  if [[ -z "$pg_major" ]]; then
+    pg_major="$(docker run --rm --entrypoint postgres "postgres:$pg_tag" --version 2>/dev/null \
+      | grep -oE '[0-9]+' | head -n1 || true)"
+  fi
+  if [[ -n "$pg_major" ]]; then
+    echo "    postgres:$pg_tag is PostgreSQL $pg_major"
+  else
+    echo "    Could not ask the image (no daemon, or the tag could not be pulled)."
+    read -rp "    Which PostgreSQL major version is 'postgres:$pg_tag'? " pg_major
+  fi
+fi
+[[ "$pg_major" =~ ^[0-9]+$ ]] || _die "could not determine the PostgreSQL major version for tag '$pg_tag'."
+
+if [ "$pg_major" -ge 18 ]; then
+  PG_DATA_MOUNT="/var/lib/postgresql"
+else
+  PG_DATA_MOUNT="/var/lib/postgresql/data"
+fi
+
 # ── Optional custom theme mount ───────────────────────────────────────────────
 echo ""
 read -rp "Mount a custom login theme directory? (see Theme.md) [y/N] " ans_theme
@@ -361,7 +394,8 @@ echo "Admin password  : $(_mask "$kc_password")"
 echo "Postgres user   : $pg_user"
 echo "Postgres passwd : $(_mask "$pg_password")"
 echo "Keycloak image  : quay.io/keycloak/keycloak:$kc_tag"
-echo "Postgres image  : postgres:$pg_tag"
+echo "Postgres image  : postgres:$pg_tag  (PostgreSQL $pg_major)"
+echo "Data volume     : postgres_data -> $PG_DATA_MOUNT"
 [[ -n "$theme_name" ]] && echo "Theme mount     : ./themes/$theme_name -> /opt/keycloak/themes/$theme_name"
 echo "================================================="
 echo ""
@@ -505,11 +539,21 @@ ${theme_volume_block}    ports:
       POSTGRES_USER: \${POSTGRES_USER}
       POSTGRES_PASSWORD: \${POSTGRES_PASSWORD}
     volumes:
-      # The data directory itself, not its parent. Mounting /var/lib/postgresql
-      # leaves the image's own VOLUME at /var/lib/postgresql/data in charge of
-      # the real data, as an anonymous volume - which a \`down\` orphans and the
-      # next \`up\` replaces with an empty one.
-      - postgres_data:/var/lib/postgresql/data
+      # The mount point is major-version specific, and the wrong one does not
+      # degrade quietly - it stops the container from starting:
+      #   <= 17: PGDATA is /var/lib/postgresql/data and the volume belongs there.
+      #          Mounting the parent instead would leave the image's own VOLUME
+      #          at /var/lib/postgresql/data holding the real data anonymously,
+      #          orphaned by a \`down\` and replaced empty by the next \`up\`.
+      #   >= 18: PGDATA moved to /var/lib/postgresql/<major>/docker and the single
+      #          mount belongs at /var/lib/postgresql. These images abort on start
+      #          if anything sits at the old .../data path:
+      #          "Error: in 18+, these Docker images are configured to store
+      #           database data in a format which is compatible with pg_ctlcluster"
+      #          (docker-library/postgres#1259).
+      # Resolved at install time from POSTGRES_IMAGE_TAG - PostgreSQL $pg_major here.
+      # Changing POSTGRES_IMAGE_TAG across that boundary means changing this line.
+      - postgres_data:$PG_DATA_MOUNT
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \${POSTGRES_USER} -d keycloak"]
       interval: 10s
