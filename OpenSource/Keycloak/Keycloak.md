@@ -98,10 +98,13 @@ this install actually decides (domain, port, project name, image tags) are
 reconciled afterwards, and the domain/port prompts are pre-filled from the file
 so pressing Enter keeps them.
 
-This is the mode to use before restoring a Postgres dump: the dump contains its
-own database role and admin account, so Keycloak has to come up already
-configured with credentials that match it. Order of operations for a full
-rebuild:
+Pair it with a Postgres restore for a full rebuild, so the new instance keeps
+the admin and database passwords you already have recorded. It isn't a hard
+requirement — the snapshot is a single-database `pg_dump --no-owner
+--no-privileges`, so it carries the `keycloak` database only, not the Postgres
+role, and it will load under whatever credentials the new instance was given.
+What the dump *does* carry is the admin account, as a row in the master realm.
+Order of operations for a full rebuild:
 
 ```bash
 ./scripts/keycloak-docker-install.sh    # mode 2 — .env from the snapshot

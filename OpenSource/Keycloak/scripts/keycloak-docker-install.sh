@@ -20,10 +20,13 @@ set -euo pipefail
 #   1) New instance  - prompts for every value and writes a fresh .env.
 #   2) Restore .env  - reuses the .env from a keycloak-docker-backup.sh
 #                      snapshot, so the instance comes up with the original
-#                      admin and database credentials. Use this mode before
-#                      restoring that snapshot's Postgres dump: the dump
-#                      carries its own DB role, and Keycloak has to be
-#                      configured with credentials that match it.
+#                      admin and database credentials, so nothing you have
+#                      recorded elsewhere changes. Pair it with a Postgres
+#                      restore for a full rebuild. (The dump is a single-
+#                      database pg_dump --no-owner --no-privileges: it holds
+#                      the keycloak database only, not the Postgres role, so
+#                      a restore does not technically require matching
+#                      credentials - this mode is about continuity.)
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
