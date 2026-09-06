@@ -1,15 +1,20 @@
 #!/bin/bash
 set -euo pipefail
 # =============================================================================
-# Keycloak Docker Install Script v1.0
+# Keycloak Docker Install Script v2.0
 # =============================================================================
-# Installs Keycloak + PostgreSQL with Docker Compose behind a host Nginx
-# reverse proxy that terminates TLS. One instance per domain:
+# Clones keycloak-production-docker-compose into an instance directory, writes
+# its .env, and brings the stack up behind a host Nginx reverse proxy.
 #
 #   /var/www/docker/keycloak/<domain>/
-#     |-- docker-compose.external-cert.yml   generated below
-#     |-- .env                               credentials (mode 600)
-#     `-- themes/<name>/                     only when a custom theme is mounted
+#     |-- docker-compose.external-cert.yml   from the repo
+#     |-- .env                               written here (mode 600)
+#     `-- themes/                            mounted read-only; a subdirectory
+#                                            per custom theme (see Theme.md)
+#
+# This script does NOT write compose files. Everything about the stack itself -
+# images, volumes, ports, health, the Postgres data layout - lives in the repo.
+# The only thing configured here is .env, which the compose files read.
 #
 # Two modes:
 #   1) New instance  - prompts for every value and writes a fresh .env.
@@ -19,22 +24,17 @@ set -euo pipefail
 #                      restoring that snapshot's Postgres dump: the dump
 #                      carries its own DB role, and Keycloak has to be
 #                      configured with credentials that match it.
-#
-# The compose filename and the two service names (`keycloak`,
-# `keycloak_postgres`) are fixed contracts - keycloak-docker-backup.sh and
-# keycloak-docker-restore.sh find instances by that filename and address the
-# services by those names. Renaming either breaks both scripts.
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NGINX_CONF_SRC="$SCRIPT_DIR/../keycloak-docker-nginx.conf"
 
-KEYCLOAK_BASE="/var/www/docker/keycloak"
+COMPOSE_REPO="https://github.com/nahicyan/keycloak-production-docker-compose"
 COMPOSE_FILENAME="docker-compose.external-cert.yml"
+
+KEYCLOAK_BASE="/var/www/docker/keycloak"
 DEFAULT_BACKUP_ROOT="/home/backup"
 DEFAULT_PORT="8090"
-DEFAULT_KC_TAG="latest"
-DEFAULT_PG_TAG="16"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -48,7 +48,6 @@ _nice_date() {
 
 _mask() { [[ -n "${1:-}" ]] && echo "(set, ${#1} chars)" || echo "(empty)"; }
 
-# Print [ok] / [--] status for a value, hiding secrets.
 _status() {  # _status <label> <value> [secret]
   local label="$1" value="${2:-}" secret="${3:-}"
   if [[ -n "$value" ]]; then
@@ -130,7 +129,7 @@ _env_set() {  # _env_set <file> <key> <value>
 }
 
 # ── Dependency check ──────────────────────────────────────────────────────────
-for cmd in docker curl openssl sed find mktemp; do
+for cmd in git docker curl openssl sed find mktemp; do
   command -v "$cmd" >/dev/null 2>&1 || _die "'$cmd' is required but not installed."
 done
 docker compose version >/dev/null 2>&1 || _die "the Docker Compose plugin ('docker compose') is required."
@@ -138,6 +137,8 @@ docker compose version >/dev/null 2>&1 || _die "the Docker Compose plugin ('dock
 echo ""
 echo "=====> Keycloak Install"
 echo "========================================"
+echo "Compose source: $COMPOSE_REPO"
+echo ""
 
 # ── Mode selection ────────────────────────────────────────────────────────────
 echo "  1) New instance                (enter all values now)"
@@ -159,9 +160,6 @@ kc_user=""
 kc_password=""
 pg_user=""
 pg_password=""
-kc_tag=""
-pg_tag=""
-theme_name=""
 RESTORED_ENV=""
 
 # ── Restore path: locate and load a backed-up .env ────────────────────────────
@@ -214,7 +212,9 @@ if [[ "$IS_NEW" == "false" ]]; then
     STAMP=$(basename "${SNAPSHOTS[$i]}")
     NICE=$(_nice_date "$STAMP")
     PG_S=$([ -f "${SNAPSHOTS[$i]}/postgres/keycloak.sql.gz" ] && echo "ok" || echo "--")
-    KC_N=$(find "${SNAPSHOTS[$i]}/keycloak" -maxdepth 1 -name "*.json" 2>/dev/null | wc -l | tr -d ' ')
+    # `|| true`: with pipefail, find failing on a snapshot that has no keycloak/
+    # subdirectory would fail the assignment and abort the script.
+    KC_N=$(find "${SNAPSHOTS[$i]}/keycloak" -maxdepth 1 -name "*.json" 2>/dev/null | wc -l | tr -d ' ' || true)
     ENV_S=$([ -f "${SNAPSHOTS[$i]}/env/.env" ] && echo "ok" || echo "--")
     printf "  %-4s %-33s %-10s %-12s %-6s\n" "$((i+1)))" "$NICE" "$PG_S" "${KC_N} realm(s)" "$ENV_S"
   done
@@ -241,11 +241,8 @@ if [[ "$IS_NEW" == "false" ]]; then
   kc_password="${KEYCLOAK_PASSWORD:-}"
   pg_user="${POSTGRES_USER:-}"
   pg_password="${POSTGRES_PASSWORD:-}"
-  kc_tag="${KEYCLOAK_IMAGE_TAG:-}"
-  pg_tag="${POSTGRES_IMAGE_TAG:-}"
   unset KEYCLOAK_URL KEYCLOAK_PORT KEYCLOAK_USER KEYCLOAK_PASSWORD \
-        POSTGRES_USER POSTGRES_PASSWORD KEYCLOAK_IMAGE_TAG POSTGRES_IMAGE_TAG \
-        COMPOSE_PROJECT_NAME
+        POSTGRES_USER POSTGRES_PASSWORD COMPOSE_PROJECT_NAME
 
   echo ""
   echo "==> Loaded: $RESTORED_ENV"
@@ -275,8 +272,8 @@ _valid_domain "$domain" || _die "'$domain' is not a valid domain name."
 domain="${domain,,}"
 
 # ── Port ──────────────────────────────────────────────────────────────────────
-# Published on 127.0.0.1 only; Nginx is the single public entry point and this
-# same port is substituted into the vhost further down.
+# Written to .env as KEYCLOAK_PORT, which the compose file publishes on
+# 127.0.0.1, and substituted into the Nginx vhost further down.
 echo ""
 echo "Keycloak is published on 127.0.0.1:<port> and proxied by Nginx."
 read -rp "Enter host port for Keycloak [${port:-$DEFAULT_PORT}]: " answer
@@ -308,82 +305,31 @@ fi
 [[ -z "$kc_password" ]] && _ask_secret kc_password "Keycloak admin password"
 
 if [[ -z "$pg_user" ]]; then
-  read -rp "  PostgreSQL username [keycloak]: " pg_user
-  pg_user="${pg_user:-keycloak}"
+  read -rp "  PostgreSQL username [postgres]: " pg_user
+  pg_user="${pg_user:-postgres}"
 fi
 [[ -z "$pg_password" ]] && _ask_secret pg_password "PostgreSQL password"
-
-# ── Image tags ────────────────────────────────────────────────────────────────
-# postgres:latest is a real hazard here: a future `docker compose pull` would
-# cross a Postgres major version and the server refuses to start on a data
-# directory written by the previous one. Pinning the major version is the
-# default; upgrades then become a deliberate dump-and-restore.
-echo ""
-if [[ -z "$kc_tag" ]]; then
-  read -rp "  Keycloak image tag [$DEFAULT_KC_TAG] (pin one, e.g. 26.0, for production): " kc_tag
-  kc_tag="${kc_tag:-$DEFAULT_KC_TAG}"
-fi
-if [[ -z "$pg_tag" ]]; then
-  read -rp "  PostgreSQL image tag [$DEFAULT_PG_TAG]: " pg_tag
-  pg_tag="${pg_tag:-$DEFAULT_PG_TAG}"
-fi
-
-# ── PostgreSQL data layout ────────────────────────────────────────────────────
-# Where the data volume mounts depends on the Postgres major version, and the
-# wrong choice is a hard start-up failure rather than a warning (see the comment
-# in the generated compose file). A numeric tag answers the question directly;
-# a floating one (latest, alpine, bookworm) has to be asked of the image.
-pg_major=""
-if [[ "$pg_tag" =~ ^([0-9]+) ]]; then
-  pg_major="${BASH_REMATCH[1]}"
-else
-  echo ""
-  echo "==> Resolving the major version behind 'postgres:$pg_tag'..."
-  docker pull "postgres:$pg_tag" >/dev/null 2>&1 || true
-  pg_major="$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' \
-    "postgres:$pg_tag" 2>/dev/null | sed -n 's/^PG_MAJOR=\([0-9]\+\).*/\1/p' | head -n1 || true)"
-  if [[ -z "$pg_major" ]]; then
-    pg_major="$(docker run --rm --entrypoint postgres "postgres:$pg_tag" --version 2>/dev/null \
-      | grep -oE '[0-9]+' | head -n1 || true)"
-  fi
-  if [[ -n "$pg_major" ]]; then
-    echo "    postgres:$pg_tag is PostgreSQL $pg_major"
-  else
-    echo "    Could not ask the image (no daemon, or the tag could not be pulled)."
-    read -rp "    Which PostgreSQL major version is 'postgres:$pg_tag'? " pg_major
-  fi
-fi
-[[ "$pg_major" =~ ^[0-9]+$ ]] || _die "could not determine the PostgreSQL major version for tag '$pg_tag'."
-
-if [ "$pg_major" -ge 18 ]; then
-  PG_DATA_MOUNT="/var/lib/postgresql"
-else
-  PG_DATA_MOUNT="/var/lib/postgresql/data"
-fi
-
-# ── Optional custom theme mount ───────────────────────────────────────────────
-echo ""
-read -rp "Mount a custom login theme directory? (see Theme.md) [y/N] " ans_theme
-if [[ "$ans_theme" =~ ^[Yy]$ ]]; then
-  read -rp "  Theme name (directory under ./themes/): " theme_name
-  [[ "$theme_name" =~ ^[A-Za-z0-9._-]+$ ]] || _die "Theme name may only contain letters, digits, '.', '_' and '-'."
-fi
 
 # ── Paths and confirmation ────────────────────────────────────────────────────
 INSTALL_DIR="$KEYCLOAK_BASE/$domain"
 COMPOSE_FILE="$INSTALL_DIR/$COMPOSE_FILENAME"
 ENV_FILE="$INSTALL_DIR/.env"
 # Compose derives its project name from the directory otherwise, which would
-# collide across instances after normalisation; pin it so container and volume
-# names stay predictable and unique per domain.
+# collide across instances after normalisation; pin it so container, volume and
+# network names stay predictable and unique per domain. The repo's compose files
+# name the network ${COMPOSE_PROJECT_NAME:-keycloak}-network from this.
 PROJECT_NAME="keycloak-${domain//./-}"
 
-[ -f "$COMPOSE_FILE" ] && _die "$COMPOSE_FILE already exists - remove that instance first, or use another domain."
+if [ -e "$INSTALL_DIR" ] && [ -n "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ]; then
+  _die "$INSTALL_DIR already exists and is not empty - remove that instance first, or use another domain."
+fi
 
 echo ""
 echo "==================== SUMMARY ===================="
 echo "Mode            : $( [[ "$IS_NEW" == "true" ]] && echo "New instance" || echo "Restore .env from backup" )"
 [[ -n "$RESTORED_ENV" ]] && echo "Source .env     : $RESTORED_ENV"
+echo "Compose repo    : $COMPOSE_REPO"
+echo "Compose file    : $COMPOSE_FILENAME"
 echo "Domain          : $domain"
 echo "URL             : https://$domain"
 echo "Host port       : 127.0.0.1:$port"
@@ -393,27 +339,23 @@ echo "Admin user      : $kc_user"
 echo "Admin password  : $(_mask "$kc_password")"
 echo "Postgres user   : $pg_user"
 echo "Postgres passwd : $(_mask "$pg_password")"
-echo "Keycloak image  : quay.io/keycloak/keycloak:$kc_tag"
-echo "Postgres image  : postgres:$pg_tag  (PostgreSQL $pg_major)"
-echo "Data volume     : postgres_data -> $PG_DATA_MOUNT"
-[[ -n "$theme_name" ]] && echo "Theme mount     : ./themes/$theme_name -> /opt/keycloak/themes/$theme_name"
 echo "================================================="
 echo ""
 read -rp "Proceed? [Y/n] " ans_proceed
 [[ "$ans_proceed" =~ ^[Nn]$ ]] && { echo "Aborted."; exit 0; }
 
-# ── Create the instance directory ─────────────────────────────────────────────
+# ── Clone the compose repo ────────────────────────────────────────────────────
 echo ""
-echo "==> Creating $INSTALL_DIR"
-sudo mkdir -p "$INSTALL_DIR"
-sudo chown "$(id -u):$(id -g)" "$INSTALL_DIR"
+echo "==> Cloning $COMPOSE_REPO"
+sudo mkdir -p "$KEYCLOAK_BASE"
+sudo git clone --depth 1 "$COMPOSE_REPO" "$INSTALL_DIR" \
+  || _die "clone failed - check network access to $COMPOSE_REPO"
+sudo chown -R "$(id -u):$(id -g)" "$INSTALL_DIR"
 chmod 750 "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 
-if [[ -n "$theme_name" ]]; then
-  mkdir -p "$INSTALL_DIR/themes/$theme_name"
-  echo "==> Theme directory ready: $INSTALL_DIR/themes/$theme_name"
-fi
+[ -f "$COMPOSE_FILE" ] || _die "$COMPOSE_FILENAME is not in the cloned repo."
+echo "==> Cloned to $INSTALL_DIR ($(git -C "$INSTALL_DIR" rev-parse --short HEAD))"
 
 # ── Write .env ────────────────────────────────────────────────────────────────
 if [[ -n "$RESTORED_ENV" ]]; then
@@ -427,8 +369,6 @@ if [[ -n "$RESTORED_ENV" ]]; then
   _env_set "$ENV_FILE" KEYCLOAK_PORT        "$port"
   _env_set "$ENV_FILE" KEYCLOAK_USER        "$kc_user"
   _env_set "$ENV_FILE" POSTGRES_USER        "$pg_user"
-  _env_set "$ENV_FILE" KEYCLOAK_IMAGE_TAG   "$kc_tag"
-  _env_set "$ENV_FILE" POSTGRES_IMAGE_TAG   "$pg_tag"
   # Passwords are left exactly as the snapshot wrote them, quoting included.
   [[ -z "$(grep -E '^[[:space:]]*KEYCLOAK_PASSWORD=' "$ENV_FILE" || true)" ]] && \
     _env_set "$ENV_FILE" KEYCLOAK_PASSWORD "'$kc_password'"
@@ -457,134 +397,29 @@ KEYCLOAK_PASSWORD='$kc_password'
 
 POSTGRES_USER=$pg_user
 POSTGRES_PASSWORD='$pg_password'
-
-KEYCLOAK_IMAGE_TAG=$kc_tag
-POSTGRES_IMAGE_TAG=$pg_tag
 ENV_EOF
 fi
 echo "==> .env written to $ENV_FILE (mode 600)"
-
-# ── Write docker-compose.external-cert.yml ────────────────────────────────────
-# External cert = TLS terminated by the host Nginx; Keycloak itself speaks
-# plain HTTP on loopback and trusts X-Forwarded-* headers from the proxy.
-theme_volume_block=""
-if [[ -n "$theme_name" ]]; then
-  printf -v theme_volume_block '    volumes:\n      - ./themes/%s:/opt/keycloak/themes/%s:ro\n' \
-    "$theme_name" "$theme_name"
-fi
-
-echo "==> Writing $COMPOSE_FILENAME"
-cat > "$COMPOSE_FILE" <<COMPOSE_EOF
-# Keycloak behind an external TLS terminator (host Nginx).
-# Generated by keycloak-docker-install.sh - values come from .env.
-#
-#   docker compose --env-file .env -f $COMPOSE_FILENAME <command>
-#
-# Do not rename this file or the two services: keycloak-docker-backup.sh and
-# keycloak-docker-restore.sh discover instances by this filename and address
-# the services as \`keycloak\` and \`keycloak_postgres\`.
-
-services:
-  keycloak:
-    image: quay.io/keycloak/keycloak:\${KEYCLOAK_IMAGE_TAG:-latest}
-    restart: always
-${theme_volume_block}    ports:
-      # Loopback only - Nginx is the sole public entry point. Binding 0.0.0.0
-      # here would expose Keycloak over plain HTTP alongside the TLS vhost.
-      - "127.0.0.1:\${KEYCLOAK_PORT:-8090}:8080"
-    environment:
-      # Both spellings of the bootstrap admin are set on purpose: KEYCLOAK_ADMIN*
-      # is what Keycloak <= 25 reads, KC_BOOTSTRAP_ADMIN_* is the 26+ replacement.
-      # With a floating image tag, setting only one would mean the admin account
-      # silently never gets created after an image bump.
-      KEYCLOAK_ADMIN: \${KEYCLOAK_USER}
-      KEYCLOAK_ADMIN_PASSWORD: \${KEYCLOAK_PASSWORD}
-      KC_BOOTSTRAP_ADMIN_USERNAME: \${KEYCLOAK_USER}
-      KC_BOOTSTRAP_ADMIN_PASSWORD: \${KEYCLOAK_PASSWORD}
-      KC_HOSTNAME: \${KEYCLOAK_URL}
-      KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://keycloak_postgres:5432/keycloak
-      KC_DB_USERNAME: \${POSTGRES_USER}
-      KC_DB_PASSWORD: \${POSTGRES_PASSWORD}
-      # Serves /health/* on the management port (9000) for the healthcheck below.
-      KC_HEALTH_ENABLED: "true"
-    depends_on:
-      keycloak_postgres:
-        condition: service_healthy
-    networks:
-      - keycloak-network
-    command:
-      - start
-      - --http-enabled=true
-      - --proxy-headers=xforwarded
-    healthcheck:
-      # The image ships no curl or wget, so bash's /dev/tcp is the probe.
-      # HTTP/1.0 keeps the request free of a Host header.
-      test: ['CMD-SHELL', 'exec 3<>/dev/tcp/127.0.0.1/9000 && printf ''GET /health/ready HTTP/1.0\r\n\r\n'' >&3 && grep -q UP <&3']
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 120s
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  keycloak_postgres:
-    image: postgres:\${POSTGRES_IMAGE_TAG:-16}
-    restart: always
-    environment:
-      POSTGRES_DB: keycloak
-      POSTGRES_USER: \${POSTGRES_USER}
-      POSTGRES_PASSWORD: \${POSTGRES_PASSWORD}
-    volumes:
-      # The mount point is major-version specific, and the wrong one does not
-      # degrade quietly - it stops the container from starting:
-      #   <= 17: PGDATA is /var/lib/postgresql/data and the volume belongs there.
-      #          Mounting the parent instead would leave the image's own VOLUME
-      #          at /var/lib/postgresql/data holding the real data anonymously,
-      #          orphaned by a \`down\` and replaced empty by the next \`up\`.
-      #   >= 18: PGDATA moved to /var/lib/postgresql/<major>/docker and the single
-      #          mount belongs at /var/lib/postgresql. These images abort on start
-      #          if anything sits at the old .../data path:
-      #          "Error: in 18+, these Docker images are configured to store
-      #           database data in a format which is compatible with pg_ctlcluster"
-      #          (docker-library/postgres#1259).
-      # Resolved at install time from POSTGRES_IMAGE_TAG - PostgreSQL $pg_major here.
-      # Changing POSTGRES_IMAGE_TAG across that boundary means changing this line.
-      - postgres_data:$PG_DATA_MOUNT
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \${POSTGRES_USER} -d keycloak"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
-    networks:
-      - keycloak-network
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-networks:
-  keycloak-network:
-    name: \${COMPOSE_PROJECT_NAME:-keycloak}-network
-    driver: bridge
-
-volumes:
-  postgres_data:
-COMPOSE_EOF
-echo "==> Compose file written to $COMPOSE_FILE"
 
 DC="docker compose --env-file $ENV_FILE -f $COMPOSE_FILE"
 DC_SHORT="docker compose --env-file .env -f $COMPOSE_FILENAME"
 
 # ── Validate before starting anything ─────────────────────────────────────────
-echo "==> Validating the compose file..."
-$DC config >/dev/null || _die "the generated compose file did not validate."
+echo "==> Validating $COMPOSE_FILENAME against .env..."
+$DC config >/dev/null || _die "$COMPOSE_FILENAME did not validate with this .env."
 echo "    OK"
+
+# ── Create bind-mount sources the compose file expects ────────────────────────
+# Docker creates a missing bind source itself, as a root-owned directory. Read
+# the resolved paths back out of `config` so this works whatever the compose
+# file names them - today that is ./themes, mounted read-only.
+mapfile -t BIND_SOURCES < <($DC config 2>/dev/null | sed -n "s|^[[:space:]]*source: \($INSTALL_DIR/.*\)$|\1|p" | sort -u || true)
+for d in "${BIND_SOURCES[@]}"; do
+  if [ ! -e "$d" ]; then
+    mkdir -p "$d"
+    echo "==> Created bind-mount source: $d"
+  fi
+done
 
 # ── Review ────────────────────────────────────────────────────────────────────
 read -rp "Would you like to review/edit .env? [y/N] " ans_env
@@ -666,7 +501,8 @@ echo "==> Keycloak installation complete."
 echo "    URL           : https://$domain"
 echo "    Admin console : https://$domain/admin"
 echo "    Admin user    : $kc_user"
-echo "    Install dir   : $INSTALL_DIR"
+echo "    Install dir   : $INSTALL_DIR  (clone of $COMPOSE_REPO)"
+echo "    Compose file  : $COMPOSE_FILENAME"
 echo "    Secrets       : $ENV_FILE (mode 600 - back this up)"
 echo ""
 echo "    Useful commands (run from $INSTALL_DIR):"
@@ -675,6 +511,7 @@ echo "    Stop    : $DC_SHORT down"
 echo "    Restart : $DC_SHORT restart"
 echo "    Logs    : $DC_SHORT logs -f keycloak"
 echo "    Status  : $DC_SHORT ps"
+echo "    Update  : git pull && $DC_SHORT up -d      # picks up compose repo changes"
 echo ""
 if [[ -n "$RESTORED_ENV" ]]; then
   echo "    This instance reuses the credentials from:"
@@ -685,10 +522,7 @@ if [[ -n "$RESTORED_ENV" ]]; then
   echo "    not the bootstrap values above."
   echo ""
 fi
-if [[ -n "$theme_name" ]]; then
-  echo "    Theme mounted from $INSTALL_DIR/themes/$theme_name"
-  echo "    Build it following Theme.md, then restart and select it under"
-  echo "    Realm settings -> Themes -> Login theme."
-  echo ""
-fi
+echo "    Custom themes: build one into $INSTALL_DIR/themes/<name> following"
+echo "    Theme.md, restart, then select it under Realm settings -> Themes."
+echo ""
 echo "    Back up with : $SCRIPT_DIR/keycloak-docker-backup.sh"

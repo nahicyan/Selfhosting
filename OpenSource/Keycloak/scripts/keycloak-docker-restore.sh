@@ -7,6 +7,7 @@ set -euo pipefail
 #   <backup-root>/keycloak/<domain>/<date-n-time>/postgres/keycloak.sql.gz
 #   <backup-root>/keycloak/<domain>/<date-n-time>/keycloak/<realm>.json
 #   <backup-root>/keycloak/<domain>/<date-n-time>/env/.env
+#   <backup-root>/keycloak/<domain>/<date-n-time>/themes/themes.tar.gz
 #
 # Restore options:
 #   1) Keycloak  — realm JSON only (config, no users/credentials)
@@ -15,6 +16,8 @@ set -euo pipefail
 #   4) Both Postgres & Environment File — .env is restored and re-sourced
 #      FIRST, so the Postgres restore that follows uses the credentials that
 #      were just written, not whatever was on the target beforehand.
+#   5) Themes    — custom login theme files only
+# Any of 1-4 can also pull the theme files along, when the snapshot has them.
 # =============================================================================
 
 DEFAULT_BACKUP_ROOT="/home/backup"
@@ -88,8 +91,8 @@ if [ ${#SNAPSHOTS[@]} -eq 0 ]; then
 fi
 
 echo ""
-printf "  %-4s %-33s %-10s %-12s %-6s\n" "#" "Date" "Postgres" "Realms" ".env"
-printf "  %-4s %-33s %-10s %-12s %-6s\n" "----" "---------------------------------" "----------" "------------" "------"
+printf "  %-4s %-33s %-10s %-12s %-6s %-7s\n" "#" "Date" "Postgres" "Realms" ".env" "Themes"
+printf "  %-4s %-33s %-10s %-12s %-6s %-7s\n" "----" "---------------------------------" "----------" "------------" "------" "-------"
 
 for i in "${!SNAPSHOTS[@]}"; do
   STAMP=$(basename "${SNAPSHOTS[$i]}")
@@ -97,7 +100,8 @@ for i in "${!SNAPSHOTS[@]}"; do
   PG_S=$([ -f "${SNAPSHOTS[$i]}/postgres/keycloak.sql.gz" ] && echo "ok" || echo "--")
   KC_N=$(find "${SNAPSHOTS[$i]}/keycloak" -maxdepth 1 -name "*.json" 2>/dev/null | wc -l | tr -d ' ')
   ENV_S=$([ -f "${SNAPSHOTS[$i]}/env/.env" ] && echo "ok" || echo "--")
-  printf "  %-4s %-33s %-10s %-12s %-6s\n" "$((i+1)))" "$NICE" "$PG_S" "${KC_N} realm(s)" "$ENV_S"
+  TH_S=$([ -f "${SNAPSHOTS[$i]}/themes/themes.tar.gz" ] && echo "ok" || echo "--")
+  printf "  %-4s %-33s %-10s %-12s %-6s %-7s\n" "$((i+1)))" "$NICE" "$PG_S" "${KC_N} realm(s)" "$ENV_S" "$TH_S"
 done
 
 echo ""
@@ -119,6 +123,9 @@ HAS_KC=false
 
 HAS_ENV=false
 [ -f "$SNAPSHOT_DIR/env/.env" ] && HAS_ENV=true
+
+HAS_THEMES=false
+[ -f "$SNAPSHOT_DIR/themes/themes.tar.gz" ] && HAS_THEMES=true
 
 # ── 4. Ask what to restore ──────────────────────────────────────────────────
 echo ""
@@ -143,6 +150,13 @@ echo "  the very users Postgres just restored and replace that realm with a"
 echo "  users-less config-only copy — so pick whichever one actually matches"
 echo "  what's broken, not both."
 echo ""
+echo "  Themes are the custom login theme files from the instance's ./themes"
+echo "  directory, which the compose file mounts read-only. Postgres records"
+echo "  which theme a realm uses but not the files, so a database restore onto"
+echo "  a fresh instance needs these too or the realm points at a theme that"
+echo "  isn't there. Extracting them merges over what is already on disk; it"
+echo "  never deletes a theme the snapshot doesn't have."
+echo ""
 echo "  Environment File (.env) restores credentials/config only — no data."
 echo "  It pairs with Postgres (option 4) because the Postgres restore below"
 echo "  needs POSTGRES_USER/PASSWORD to connect with; when both are selected,"
@@ -155,18 +169,28 @@ echo "  1) Keycloak (realm configuration JSON)"
 echo "  2) Postgres (full database)"
 echo "  3) Environment File (.env)"
 echo "  4) Both Postgres & Environment File (.env)"
-read -rp "Select [1-4]: " ACTION
+echo "  5) Custom theme files"
+read -rp "Select [1-5]: " ACTION
 
 DO_KC=false
 DO_PG=false
 DO_ENV=false
+DO_THEMES=false
 case "$ACTION" in
   1) DO_KC=true ;;
   2) DO_PG=true ;;
   3) DO_ENV=true ;;
   4) DO_PG=true; DO_ENV=true ;;
+  5) DO_THEMES=true ;;
   *) echo "Invalid selection."; exit 1 ;;
 esac
+
+# Theme files accompany any of the other options rather than replacing them.
+if ! $DO_THEMES && $HAS_THEMES; then
+  echo ""
+  read -rp "This snapshot also has custom theme files. Restore those too? [y/N]: " ANS_THEMES
+  [[ "$ANS_THEMES" =~ ^[Yy]$ ]] && DO_THEMES=true
+fi
 
 if $DO_KC && ! $HAS_KC; then
   echo "Error: this snapshot has no Keycloak realm JSON."
@@ -178,6 +202,10 @@ if $DO_PG && ! $HAS_PG; then
 fi
 if $DO_ENV && ! $HAS_ENV; then
   echo "Error: this snapshot has no .env backup."
+  exit 1
+fi
+if $DO_THEMES && ! $HAS_THEMES; then
+  echo "Error: this snapshot has no theme files."
   exit 1
 fi
 
@@ -315,6 +343,7 @@ echo "Compose file    : $COMPOSE_FILE"
 echo "Restoring       :"
 $DO_ENV && echo "  - .env (restored first)"
 $DO_PG && echo "  - PostgreSQL database (full, authoritative)"
+$DO_THEMES && echo "  - Custom theme files into ./themes"
 if $DO_KC; then
   echo "  - Keycloak realm JSON:"
   for f in "${SELECTED_REALM_FILES[@]}"; do
@@ -433,6 +462,24 @@ if $DO_KC; then
       echo "  Import failed for '$RNAME' with HTTP status $HTTP_STATUS."
     fi
   done
+fi
+
+# ── 11. Restore custom themes ───────────────────────────────────────────────
+if $DO_THEMES; then
+  echo ""
+  echo "=== Restoring custom themes ==="
+  # The tarball holds a top-level themes/ directory, so extracting at the
+  # project root puts it back exactly where the compose file mounts it.
+  tar xzf "$SNAPSHOT_DIR/themes/themes.tar.gz" -C "$PROJECT_DIR"
+  echo "Restored: $PROJECT_DIR/themes"
+  # Keycloak caches themes in production mode, so a running container keeps
+  # serving the old ones until it restarts.
+  if [ -n "$(dc ps --format '{{.Name}}' keycloak 2>/dev/null | head -n1)" ]; then
+    echo "Restarting Keycloak to clear the theme cache..."
+    dc restart keycloak
+  else
+    echo "Keycloak is not running - the themes are picked up on next start."
+  fi
 fi
 
 echo ""

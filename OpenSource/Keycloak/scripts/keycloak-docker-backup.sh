@@ -9,6 +9,7 @@ set -euo pipefail
 #   <backup-root>/keycloak/<domain>/<date-n-time>/postgres/keycloak.sql.gz
 #   <backup-root>/keycloak/<domain>/<date-n-time>/keycloak/<realm>.json
 #   <backup-root>/keycloak/<domain>/<date-n-time>/env/.env
+#   <backup-root>/keycloak/<domain>/<date-n-time>/themes/themes.tar.gz
 # =============================================================================
 
 DEFAULT_BACKUP_ROOT="/home/backup"
@@ -211,6 +212,24 @@ cp "$ENV_FILE" "$BACKUP_DEST/env/.env"
 chmod 600 "$BACKUP_DEST/env/.env"
 echo "Saved: $BACKUP_DEST/env/.env"
 
+# ── 8b. Custom themes ────────────────────────────────────────────────────────
+# The compose file mounts ./themes read-only into the container. Postgres
+# records which theme a realm uses; the files themselves live only here, so a
+# restore without them leaves realms pointing at a theme that no longer exists.
+THEMES_DIR="$PROJECT_DIR/themes"
+THEME_LIST=""
+if [ -d "$THEMES_DIR" ] && [ -n "$(ls -A "$THEMES_DIR" 2>/dev/null)" ]; then
+  echo ""
+  echo "=== Backing up custom themes ==="
+  mkdir -p "$BACKUP_DEST/themes"
+  tar czf "$BACKUP_DEST/themes/themes.tar.gz" -C "$PROJECT_DIR" themes
+  THEME_LIST=$(find "$THEMES_DIR" -maxdepth 1 -mindepth 1 -type d -printf '%f ' 2>/dev/null || true)
+  echo "Saved: $BACKUP_DEST/themes/themes.tar.gz  (${THEME_LIST:-no theme directories})"
+else
+  echo ""
+  echo "=== No custom themes to back up ==="
+fi
+
 # ── 9. Manifest ──────────────────────────────────────────────────────────────
 {
   echo "Keycloak backup manifest"
@@ -220,9 +239,11 @@ echo "Saved: $BACKUP_DEST/env/.env"
   echo "Keycloak image  : $KC_IMAGE"
   echo "Postgres image  : $PG_IMAGE"
   echo "Realms exported : ${REALM_LIST:-none}"
+  echo "Themes saved    : ${THEME_LIST:-none}"
   echo "postgres/       : keycloak.sql.gz (full database — authoritative)"
   echo "keycloak/       : one JSON file per realm (config only, no users/credentials)"
   echo "env/            : .env (contains secrets — mode 600)"
+  echo "themes/         : themes.tar.gz (custom login themes, if any)"
 } > "$BACKUP_DEST/manifest.txt"
 
 # ── 10. Prune old snapshots for this domain ─────────────────────────────────
