@@ -1,0 +1,63 @@
+# code-server — VS Code in the browser (https://github.com/coder/code-server)
+#
+# There is no docker-compose.yml in the upstream repo. This file is a faithful
+# translation of the official `docker run` invocation from the install docs
+# (https://coder.com/docs/code-server/latest/install#docker):
+#
+#   docker run -it --name code-server -p 127.0.0.1:8080:8080 \
+#     -v "$HOME/.local:/home/coder/.local" \
+#     -v "$HOME/.config:/home/coder/.config" \
+#     -v "$PWD:/home/coder/project" \
+#     -u "$(id -u):$(id -g)" \
+#     -e "DOCKER_USER=$USER" \
+#     codercom/code-server:latest
+#
+# The upstream image already sets `--bind-addr 0.0.0.0:8080` in its entrypoint,
+# so the container always listens on :8080; only the *host* side is configurable.
+#
+# Values below come from a .env file written by
+# scripts/code-server-docker-install.sh. Run from the install directory:
+#   docker compose up -d
+
+services:
+  code-server:
+    image: codercom/code-server:${CODE_SERVER_VERSION:-latest}
+    container_name: ${CONTAINER_NAME:-code-server}
+    restart: unless-stopped
+
+    # Forward the host UID/GID (matches `-u $(id -u):$(id -g)`) so files created
+    # in the bind mounts below are owned by your user on the host. The image
+    # remaps its built-in `coder` account to this id via fixuid at startup.
+    user: "${PUID:-1000}:${PGID:-1000}"
+
+    environment:
+      # Keeps `docker compose exec code-server ...` running as the right user
+      # when PUID/PGID are not 1000 (matches `-e DOCKER_USER=$USER`).
+      DOCKER_USER: ${DOCKER_USER:-coder}
+      TZ: ${TZ:-Etc/UTC}
+      # Web login (auth: password). The installer generates and stores this in
+      # .env. An empty value is ignored by code-server, not treated as blank.
+      PASSWORD: ${PASSWORD:-}
+      # Optional argon2 hash; wins over PASSWORD when set. Because compose also
+      # interpolates .env, every `$` in the hash must be written as `$$` there.
+      HASHED_PASSWORD: ${HASHED_PASSWORD:-}
+      # Optional absolute template for the ports panel / extension proxy links,
+      # e.g. https://{{port}}.code.example.com (needs wildcard DNS + TLS).
+      VSCODE_PROXY_URI: ${VSCODE_PROXY_URI:-}
+
+    # Published on loopback only — the host Nginx vhost is the public entrypoint.
+    ports:
+      - "127.0.0.1:${CODE_SERVER_PORT:-8080}:8080"
+
+    volumes:
+      - ./config:/home/coder/.config   # ~/.config/code-server/config.yaml, User settings
+      - ./local:/home/coder/.local     # extensions, server data, CLI state
+      - ./project:/home/coder/project  # the workspace code-server opens
+
+    healthcheck:
+      # /healthz is served without auth by code-server itself.
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
