@@ -46,6 +46,45 @@ _port_in_use() {
 
 _mask() { [[ -n "${1:-}" ]] && echo "(set, ${#1} chars)" || echo "(empty)"; }
 
+_gen_secret() { openssl rand -hex 24; }
+
+# The password is written to .env and read straight back by Compose's dotenv
+# parser to interpolate into the container's PASSWORD. This set is safe there -
+# notably it excludes '$', which Compose would read as a variable reference.
+# Anything outside it is refused so a typed password can't silently reach
+# code-server mangled or truncated.
+_valid_secret() {
+  [[ "$1" =~ ^[A-Za-z0-9._~@!?*:-]{8,}$ ]]
+}
+
+# _ask_secret <var-name> <label> - prompt silently for a password: blank input
+# generates a strong one, anything else must be confirmed and pass _valid_secret.
+_ask_secret() {
+  local -n _ref="$1"
+  local label="$2" first second
+  while :; do
+    read -rsp "  ${label} (blank = generate a strong one): " first; echo
+    if [[ -z "$first" ]]; then
+      _ref="$(_gen_secret)"
+      echo "    Generated: ${_ref}"
+      return 0
+    fi
+    read -rsp "  Confirm ${label}: " second; echo
+    if [[ "$first" != "$second" ]]; then
+      echo "    Values do not match - try again."
+      continue
+    fi
+    if ! _valid_secret "$first"; then
+      echo "    Rejected. Use 8+ characters from: A-Z a-z 0-9 . _ ~ - @ ! ? * :"
+      echo "    (a '\$' or similar .env metacharacter would be rewritten by"
+      echo "     Compose before code-server ever sees it.)"
+      continue
+    fi
+    _ref="$first"
+    return 0
+  done
+}
+
 # ── Dependency check ──────────────────────────────────────────────────────────
 for cmd in docker curl openssl sed awk; do
   command -v "$cmd" >/dev/null 2>&1 || _die "'$cmd' is required but not installed."
@@ -92,6 +131,12 @@ if _port_in_use "$port"; then
   [[ "$ans_port" =~ ^[Yy]$ ]] || _die "Aborted - pick a free port."
 fi
 
+# ── 4. Web login password ────────────────────────────────────────────────────
+echo ""
+echo "code-server protects the editor with one password (auth: password)."
+echo "Leave the prompt blank to have a strong one generated for you."
+_ask_secret web_password "Web login password"
+
 # ── Image tag ─────────────────────────────────────────────────────────────────
 echo ""
 read -rp "code-server image tag [$DEFAULT_IMAGE_TAG]: " image_tag
@@ -117,7 +162,6 @@ fi
 [ "$PUID" != "0" ] || echo "NOTE: running as root - code-server will run as root inside the container."
 
 TZ_VALUE="$(timedatectl show -p Timezone --value 2>/dev/null || cat /etc/timezone 2>/dev/null || echo 'Etc/UTC')"
-web_password="$(openssl rand -hex 24)"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
@@ -130,7 +174,7 @@ echo "Image           : codercom/code-server:$image_tag"
 echo "Compose project : $PROJECT_NAME"
 echo "Run as (uid:gid): $PUID:$PGID ($DOCKER_USER)"
 echo "Timezone        : $TZ_VALUE"
-echo "Web password    : $(_mask "$web_password") (generated - stored in .env)"
+echo "Web password    : $(_mask "$web_password") (stored in .env)"
 echo "================================================="
 echo ""
 read -rp "Proceed? [Y/n] " ans_proceed
