@@ -8,19 +8,23 @@ set -euo pipefail
 #
 #   <install-dir>/
 #     |-- compose.yaml   downloaded from github.com/coder/coder (main)
-#     `-- .env           written here (mode 600) - holds the Postgres password
+#     `-- .env           written here (mode 600) - Postgres + SMTP passwords
 #
 # Named Docker volumes hold the state:
 #   <project>_coder_data  ->  PostgreSQL 17 data
 #   <project>_coder_home  ->  /home/coder in the Coder container
 #
-# The compose file is used as published; this script only patches three things
-# into it - the published host port (bound to loopback), and the docker group
-# so Coder can drive Docker-based templates - then fills in .env and wires up
-# Nginx. See:
+# The compose file is used almost as published; this script patches the coder
+# service only where it must: publish the host port on 127.0.0.1, fill
+# group_add with the host docker gid, and - because stock compose.yaml wires
+# only CODER_PG_CONNECTION_URL / CODER_HTTP_ADDRESS / CODER_ACCESS_URL into the
+# container - add "${VAR}" references for CODER_WILDCARD_ACCESS_URL and the
+# CODER_EMAIL_* settings when those are enabled, so the matching .env values
+# actually reach Coder. Then it fills in .env and wires up Nginx. See:
 #   https://coder.com/docs/install/docker
-#   https://coder.com/docs/admin/setup           (CODER_ACCESS_URL, Postgres)
+#   https://coder.com/docs/admin/setup                     (CODER_ACCESS_URL, Postgres)
 #   https://coder.com/docs/tutorials/reverse-proxy-nginx
+#   https://coder.com/docs/admin/monitoring/notifications  (SMTP)
 #
 # The container listens on :7080; the host port you pick is published on
 # 127.0.0.1 and proxied by Nginx, which terminates TLS.
@@ -49,6 +53,13 @@ _valid_domain() {
 
 _valid_port() {
   [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
+}
+
+# host:port with a 1-65535 port - used for the SMTP relay (smarthost).
+_valid_smarthost() {
+  [[ "$1" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?:[0-9]{1,5}$ ]] || return 1
+  local _p="${1##*:}"
+  [ "$_p" -ge 1 ] && [ "$_p" -le 65535 ]
 }
 
 _port_in_use() {
@@ -101,7 +112,7 @@ _ask_secret() {
 }
 
 # ── Dependency check ──────────────────────────────────────────────────────────
-for cmd in docker curl openssl sed awk grep; do
+for cmd in docker curl openssl sed awk grep mktemp; do
   command -v "$cmd" >/dev/null 2>&1 || _die "'$cmd' is required but not installed."
 done
 docker compose version >/dev/null 2>&1 || _die "the Docker Compose plugin ('docker compose') is required."
@@ -168,7 +179,59 @@ else
   wildcard=""
 fi
 
-# ── 6. Image tag ─────────────────────────────────────────────────────────────
+# ── 6. Email / SMTP notifications (optional) ─────────────────────────────────
+# Coder has no built-in mail server. Without SMTP the dashboard Inbox still
+# works, but nothing is emailed. https://coder.com/docs/admin/monitoring/notifications
+echo ""
+echo "Coder can email notifications (workspace lifecycle, account events) through"
+echo "an external SMTP relay. Skip this to leave email delivery disabled."
+read -rp "Configure SMTP now? [y/N] " ans_smtp
+
+smtp_enabled=false
+smtp_from=""
+smtp_smarthost=""
+smtp_hello=""
+smtp_user=""
+smtp_pass=""
+smtp_starttls=false
+smtp_forcetls=false
+
+if [[ "$ans_smtp" =~ ^[Yy]$ ]]; then
+  smtp_enabled=true
+
+  read -rp "  SMTP relay host:port (e.g. smtp.gmail.com:587): " smtp_smarthost
+  _valid_smarthost "$smtp_smarthost" || _die "SMTP relay must be host:port, e.g. smtp.example.com:587"
+
+  read -rp "  From address [Coder <coder@$domain>]: " smtp_from
+  smtp_from="${smtp_from:-Coder <coder@$domain>}"
+  case "$smtp_from" in *\'*) _die "From address must not contain a single quote - set CODER_EMAIL_FROM in .env by hand instead." ;; esac
+
+  read -rp "  EHLO/HELO hostname [$domain]: " smtp_hello
+  smtp_hello="${smtp_hello:-$domain}"
+  [[ "$smtp_hello" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || _die "EHLO/HELO hostname '$smtp_hello' is not valid."
+
+  read -rp "  SMTP username (blank = unauthenticated relay): " smtp_user
+  if [[ -n "$smtp_user" ]]; then
+    case "$smtp_user" in *\'*) _die "SMTP username must not contain a single quote." ;; esac
+    read -rsp "  SMTP password / app password: " smtp_pass; echo
+    [[ -n "$smtp_pass" ]] || _die "SMTP password cannot be empty when a username is set."
+    case "$smtp_pass" in *\'*) _die "SMTP password contains a single quote - not supported here; set CODER_EMAIL_AUTH_PASSWORD in .env by hand after install." ;; esac
+  fi
+
+  echo "  Connection security:"
+  echo "    1) STARTTLS      - upgrade a plaintext port (usually 587)"
+  echo "    2) implicit TLS  - TLS from the first byte (port 465)"
+  echo "    3) none          - plaintext (port 25 / trusted internal relay)"
+  read -rp "  Choose [1]: " ans_tls
+  case "${ans_tls:-1}" in
+    1) smtp_starttls=true ;;
+    2) smtp_forcetls=true ;;
+    3) : ;;
+    *) _die "Invalid choice '$ans_tls'." ;;
+  esac
+fi
+
+# ── 7. Image tag ─────────────────────────────────────────────────────────────
 echo ""
 read -rp "Coder version / image tag [$DEFAULT_VERSION]: " image_tag
 image_tag="${image_tag:-$DEFAULT_VERSION}"
@@ -204,6 +267,21 @@ echo "Compose project : $PROJECT_NAME"
 echo "Postgres user   : $pg_user"
 echo "Postgres db     : $DEFAULT_PG_DB"
 echo "Postgres passwd : $(_mask "$pg_password") (stored in .env)"
+if [ "$smtp_enabled" = true ]; then
+  echo "SMTP relay      : $smtp_smarthost"
+  echo "SMTP from       : $smtp_from"
+  if [ -n "$smtp_user" ]; then
+    echo "SMTP auth       : $smtp_user  /  password $(_mask "$smtp_pass")"
+  else
+    echo "SMTP auth       : (none - unauthenticated relay)"
+  fi
+  smtp_tls_desc="none (plaintext)"
+  [ "$smtp_starttls" = true ] && smtp_tls_desc="STARTTLS"
+  [ "$smtp_forcetls" = true ] && smtp_tls_desc="implicit TLS (465)"
+  echo "SMTP TLS        : $smtp_tls_desc"
+else
+  echo "SMTP            : (not configured)"
+fi
 if [ -n "$docker_gid" ]; then
   echo "Docker group    : gid $docker_gid (group_add in compose.yaml)"
 else
@@ -270,6 +348,73 @@ else
   echo "      https://coder.com/docs/install/docker"
 fi
 
+# ── Patch the coder service 'environment:' with the keys we set ─────────────-
+# Stock compose.yaml passes only CODER_PG_CONNECTION_URL, CODER_HTTP_ADDRESS and
+# CODER_ACCESS_URL into the container; anything else in .env is used for Compose
+# interpolation only and never reaches Coder. Add "${VAR}" references for the
+# extra keys we actually populate, right after the CODER_ACCESS_URL line.
+# (docs/tutorials/reverse-proxy-caddy.md does the same for the wildcard.)
+inject_keys=()
+[ -n "$wildcard" ] && inject_keys+=("CODER_WILDCARD_ACCESS_URL")
+if [ "$smtp_enabled" = true ]; then
+  inject_keys+=("CODER_EMAIL_FROM" "CODER_EMAIL_SMARTHOST" "CODER_EMAIL_HELLO" \
+                "CODER_EMAIL_TLS_STARTTLS" "CODER_EMAIL_FORCE_TLS")
+  [ -n "$smtp_user" ] && inject_keys+=("CODER_EMAIL_AUTH_USERNAME" "CODER_EMAIL_AUTH_PASSWORD")
+fi
+
+if [ "${#inject_keys[@]}" -gt 0 ]; then
+  anchor_line="$(grep -m1 -E '^[[:space:]]*CODER_ACCESS_URL:' "$COMPOSE_FILE" || true)"
+  [ -n "$anchor_line" ] || _die "no 'CODER_ACCESS_URL:' line in $COMPOSE_FILE - upstream compose.yaml changed; add ${inject_keys[*]} to the coder service 'environment:' block by hand."
+  indent="${anchor_line%%[! ]*}"
+  : "${indent:=      }"
+
+  block_file="$(mktemp)"
+  for _k in "${inject_keys[@]}"; do
+    printf '%s%s: "${%s}"\n' "$indent" "$_k" "$_k" >> "$block_file"
+  done
+  sed -i -e "/^[[:space:]]*CODER_ACCESS_URL:/r $block_file" "$COMPOSE_FILE"
+  rm -f "$block_file"
+
+  for _k in "${inject_keys[@]}"; do
+    grep -qE "^[[:space:]]*${_k}:" "$COMPOSE_FILE" \
+      || _die "failed to inject ${_k} into $COMPOSE_FILE - add it to the coder 'environment:' block by hand."
+  done
+  echo "==> compose.yaml: coder.environment += ${inject_keys[*]}"
+fi
+
+# ── Assemble the .env SMTP section ─────────────────────────────────────────-
+if [ "$smtp_enabled" = true ]; then
+  SMTP_DOTENV="
+# ── Email / SMTP notifications ────────────────────────────────────────────-
+# Referenced from compose.yaml's coder 'environment:' block (keys added above).
+# Change a value here, then:  docker compose up -d
+CODER_EMAIL_FROM='$smtp_from'
+CODER_EMAIL_SMARTHOST=$smtp_smarthost
+CODER_EMAIL_HELLO=$smtp_hello
+CODER_EMAIL_TLS_STARTTLS=$smtp_starttls
+CODER_EMAIL_FORCE_TLS=$smtp_forcetls"
+  if [ -n "$smtp_user" ]; then
+    SMTP_DOTENV="$SMTP_DOTENV
+CODER_EMAIL_AUTH_USERNAME='$smtp_user'
+# Single-quoted so Compose takes it literally - \$, # and spaces need no escaping.
+CODER_EMAIL_AUTH_PASSWORD='$smtp_pass'"
+  fi
+else
+  SMTP_DOTENV="
+# ── Email / SMTP notifications (disabled) ─────────────────────────────────-
+# Re-run coder-docker-install.sh to enable, or add these keys to the coder
+# service 'environment:' block in compose.yaml as \"\${KEY}\", set them below,
+# then:  docker compose up -d
+# https://coder.com/docs/admin/monitoring/notifications
+#CODER_EMAIL_FROM='Coder <coder@$domain>'
+#CODER_EMAIL_SMARTHOST=smtp.example.com:587
+#CODER_EMAIL_HELLO=$domain
+#CODER_EMAIL_TLS_STARTTLS=true
+#CODER_EMAIL_FORCE_TLS=false
+#CODER_EMAIL_AUTH_USERNAME=''
+#CODER_EMAIL_AUTH_PASSWORD=''"
+fi
+
 # ── Write .env ──────────────────────────────────────────────────────────────
 echo "==> Writing .env"
 touch "$ENV_FILE"
@@ -298,6 +443,7 @@ $( [ -n "$wildcard" ] && echo "CODER_WILDCARD_ACCESS_URL=$wildcard" || echo "#CO
 POSTGRES_USER=$pg_user
 POSTGRES_PASSWORD=$pg_password
 POSTGRES_DB=$DEFAULT_PG_DB
+$SMTP_DOTENV
 ENV_EOF
 echo "==> .env written to $ENV_FILE (mode 600)"
 
@@ -392,6 +538,12 @@ echo "    First run    : open the URL and create the first (owner) account."
 echo "    Install dir  : $INSTALL_DIR"
 echo "    Compose file : $COMPOSE_FILE  (downloaded from coder/coder@main)"
 echo "    Secrets      : $ENV_FILE (mode 600 - back this up)"
+if [ "$smtp_enabled" = true ]; then
+  echo "    Email        : SMTP via $smtp_smarthost (from: $smtp_from)"
+  echo "                   test it (as a logged-in user):"
+  echo "                     docker compose exec coder coder notifications test"
+  echo "                   status also shows under Deployment > Notifications."
+fi
 echo "    Data         : Docker volumes ${PROJECT_NAME}_coder_data (Postgres) and ${PROJECT_NAME}_coder_home"
 echo ""
 echo "    Useful commands (run from $INSTALL_DIR):"
