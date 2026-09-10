@@ -1,0 +1,26 @@
+{
+    "id": "dad0b11d-c567-4020-b4b5-18d6cd2a1efe",
+    "name": "GraphenePush",
+    "nameSlug": "graphene-push",
+    "version": "1.2.0",
+    "description": "Sends DM/mention notifications to a self-hosted ntfy server (for UnifiedPush/GrapheneOS clients that have no FCM/APNs) and can trigger Home Assistant actions on DMs from trusted users.",
+    "requiredApiVersion": "^1.65.0",
+    "author": {
+        "name": "Selfhosting",
+        "support": "https://github.com/nahicyan/Selfhosting"
+    },
+    "classFile": "GraphenePushApp.ts",
+    "iconFile": "icon.png",
+    "permissions": [
+        {
+            "name": "networking"
+        }
+    ],
+    "implements": [
+        "IPostMessageSent",
+        "IPostUserLoggedIn",
+        "IPostUserStatusChanged",
+        "IPostUserCreated",
+        "IPostUserUpdated"
+    ]
+}

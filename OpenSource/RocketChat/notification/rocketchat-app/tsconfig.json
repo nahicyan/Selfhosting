@@ -1,0 +1,18 @@
+{
+	"compilerOptions": {
+		"target": "es2019",
+		"module": "commonjs",
+		"moduleResolution": "node",
+		"declaration": false,
+		"noImplicitAny": true,
+		"removeComments": true,
+		"noLib": false,
+		"emitDecoratorMetadata": true,
+		"experimentalDecorators": true,
+		"sourceMap": false,
+		"strict": true,
+		"lib": ["es2019"],
+		"types": ["node"]
+	},
+	"exclude": ["node_modules", ".rc-apps"]
+}

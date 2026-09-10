@@ -1,21 +1,9 @@
-OpenSource/Matrix/element-call
-OpenSource/Matrix/matrix-authentication-service
-OpenSource/Matrix/synapse
-OpenSource/Matrix/Self-hosting Matrix with Synapse, MAS, and Element Call - Claude.pdf
-OpenSource/Matrix/Instructions_for_installing_Matrix_updated_with_MAS.txt
-
+# Dist
+OpenSource/RocketChat/notification/rocketchat-app/dist
+OpenSource/RocketChat/notification/rocketchat-app/node_modules
+# Project Reference Remove Later
 OpenSource/RocketChat/notification/Rocket.Chat-8.7.0
-OpenSource/Keycloak/migration
-OpenSource/Keycloak/EOL
-OpenSource/GitLab/.Temp
-OpenSource/GitLab/gitlab-self-hosted-setup-main
-OpenSource/keycloak-production-docker-compose
 OpenSource/Code-Server/code-server
 OpenSource/Coder/coder
-
-#Remove Later
-OpenSource/RocketChat/notification/README.md
-OpenSource/Plane/.temp
 OpenSource/RocketChat/notification/Rocket.Chat-8.7.0
-OpenSource/RocketChat/notification/rocketchat-app
 OpenSource/RocketChat/notification/rocketchat-compose-2.0.0

@@ -1,0 +1,16 @@
+{
+	"name": "graphene-push",
+	"version": "1.0.0",
+	"description": "Sends DM/mention notifications to a self-hosted ntfy server and can trigger Home Assistant actions on DMs from trusted users.",
+	"private": true,
+	"scripts": {
+		"package": "rc-apps package"
+	},
+	"devDependencies": {
+		"@rocket.chat/apps-cli": "^1.14.0",
+		"@rocket.chat/apps-engine": "^1.65.0",
+		"@rocket.chat/ui-kit": "1.0.0",
+		"@types/node": "^18.19.0",
+		"typescript": "^4.9.5"
+	}
+}
