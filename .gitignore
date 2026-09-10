@@ -14,7 +14,9 @@ OpenSource/Code-Server/code-server
 OpenSource/Coder/coder
 
 #Remove Later
-OpenSource/RocketChat/notification
 OpenSource/RocketChat/notification/docker-compose-rc-notification.yml
 OpenSource/RocketChat/notification/README.md
 OpenSource/Plane/.temp
+OpenSource/RocketChat/notification/Rocket.Chat-8.7.0
+OpenSource/RocketChat/notification/rocketchat-app
+OpenSource/RocketChat/notification/rocketchat-compose-2.0.0
