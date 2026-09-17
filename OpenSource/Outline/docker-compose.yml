@@ -1,0 +1,70 @@
+# Outline — https://github.com/outline/outline
+#
+# This follows the official Docker Compose layout from the self-hosting docs
+# (outline/temp/docker.txt: outline + redis + postgres, one shared env file)
+# with two deliberate differences from that example:
+#
+#   - No `https-portal` service. Every app in this repo is fronted by a host
+#     Nginx vhost that terminates TLS (see outline-nginx.conf), so Outline is
+#     published on 127.0.0.1 only and Nginx is the sole public entry point.
+#   - Healthchecks and `condition: service_healthy` on depends_on, so Outline
+#     never starts against a Postgres/Redis that isn't actually ready yet.
+#
+# All application configuration (URL, SECRET_KEY, DATABASE_URL, SMTP, ...)
+# lives in .env, written by scripts/outline-docker-install.sh. Docker Compose
+# auto-loads .env from this directory both to interpolate ${...} below and,
+# via env_file, to pass every key straight into the outline container using
+# Outline's own variable names — matching outline/.env.sample 1:1.
+#
+# Because Compose also interpolates .env itself, any literal `$` in a value
+# (e.g. an existing SMTP password) must be written there as `$$` or Compose
+# will treat it as a variable reference. The install script does this
+# automatically for every SMTP field.
+
+services:
+  outline:
+    image: docker.getoutline.com/outlinewiki/outline:${OUTLINE_VERSION:-latest}
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:${OUTLINE_PORT:-3000}:3000"
+    volumes:
+      - storage-data:/var/lib/outline/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # /_health checks both the database and Redis connections and returns
+      # "OK" (server/main.ts) — a true readiness probe, not just "is up".
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/_health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - database-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d ${POSTGRES_DB:-outline} -U ${POSTGRES_USER:-outline}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  storage-data:
+  database-data:
