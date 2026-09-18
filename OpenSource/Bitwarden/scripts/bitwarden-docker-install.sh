@@ -216,8 +216,12 @@ fi
 smtp_trust="false"
 read -rp "  Trust the server certificate without validating it (self-signed; NOT for production)? [y/N] " ans_trust
 [[ "$ans_trust" =~ ^[Yy]$ ]] && smtp_trust="true"
-read -rp "  Reply-to / sender address [no-reply@$domain]: " smtp_from
-smtp_from="${smtp_from:-no-reply@$domain}"
+# Most servers only let a login send as its own address (else 5.7.1 "Sender
+# address rejected: not owned by user"), so default to the login when it is one.
+from_default="no-reply@$domain"
+[[ "$smtp_username" == *@*.* ]] && from_default="$smtp_username"
+read -rp "  Sender address - must be allowed for this login [$from_default]: " smtp_from
+smtp_from="${smtp_from:-$from_default}"
 _valid_email "$smtp_from" || _die "'$smtp_from' does not look like a valid email address."
 echo -n "  Checking that $smtp_host:$smtp_port is reachable... "
 if _smtp_probe "$smtp_host" "$smtp_port"; then

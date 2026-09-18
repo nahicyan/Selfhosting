@@ -286,6 +286,11 @@ Azure Blob attachment storage, SSO cookie-vendor and refresh-token tuning
   confirm `smtp__ssl` vs `startTls` match the port (587 → `ssl=false`,
   `startTls=true`; 465 → `ssl=true`), that the password has no `$`, and that
   you did a full `./manage.sh restart` after editing.
+- **"An unhandled server error" when registering** — check
+  `./manage.sh logs identity`. `5.7.1 Sender address rejected: not owned by user`
+  means `globalSettings__mail__replyToEmail` isn't an address the SMTP login
+  may send as; set it to the SMTP username (or allow the alias on the mail
+  server), then `./manage.sh restart`.
 - **`mssql` unhealthy on first start** — needs ≥2 GB RAM free; check
   `./manage.sh logs mssql`.
 - **Permission errors in `bwdata/`** — `bwdata/env/uid.env` sets the UID/GID the

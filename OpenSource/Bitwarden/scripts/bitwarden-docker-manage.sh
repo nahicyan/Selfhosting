@@ -17,13 +17,25 @@ set -euo pipefail
 # =============================================================================
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_die() { echo "ERROR: $*" >&2; exit 1; }
+
+# Normally this file is the copy in <install-dir>/manage.sh. When run from the
+# repo instead, use $BITWARDEN_DIR, or the single instance found under the
+# default base path.
+if [ ! -f "$DIR/bitwarden.conf" ]; then
+  if [ -n "${BITWARDEN_DIR:-}" ]; then
+    DIR="${BITWARDEN_DIR%/}"
+  else
+    mapfile -t _found < <(find /var/www/docker/bitwarden -maxdepth 2 -name bitwarden.conf -exec dirname {} \; 2>/dev/null | sort -u)
+    [ "${#_found[@]}" -eq 1 ] || _die "bitwarden.conf not found next to this script. Run <install-dir>/manage.sh, or set BITWARDEN_DIR=<install-dir>."
+    DIR="${_found[0]}"
+  fi
+fi
 BWDATA="$DIR/bwdata"
 CONF="$DIR/bitwarden.conf"
 COMPOSE_FILE="$BWDATA/docker/docker-compose.yml"
 REGISTRY="ghcr.io/bitwarden"
 VERSIONS_URL="https://go.btwrdn.com/bw-sh-versions"
-
-_die() { echo "ERROR: $*" >&2; exit 1; }
 
 [ "$(id -u)" -ne 0 ] || _die "Do not run Bitwarden as root (see Bitwarden's install docs). Run as a user in the docker group."
 command -v docker >/dev/null 2>&1 || _die "'docker' is required."
