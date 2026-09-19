@@ -26,12 +26,15 @@ fi
 
 [ -d "$BACKUP_BASE" ] || { echo "Error: '$BACKUP_BASE' not found."; exit 1; }
 
+RC_BACKUPS_DIR="$BACKUP_BASE/rocketchat"
+[ -d "$RC_BACKUPS_DIR" ] || { echo "Error: '$RC_BACKUPS_DIR' not found."; exit 1; }
+
 # ── 2. Select instance (domain) ──────────────────────────────
 echo ""
-mapfile -t RC_DOMAIN_DIRS < <(find "$BACKUP_BASE" -maxdepth 1 -type d -name "rocketchat-*" | sort)
+mapfile -t RC_DOMAIN_DIRS < <(find "$RC_BACKUPS_DIR" -maxdepth 1 -mindepth 1 -type d | sort)
 
 if [ ${#RC_DOMAIN_DIRS[@]} -eq 0 ]; then
-  echo "No rocketchat-* backup folders found in '$BACKUP_BASE'."
+  echo "No instance backup folders found in '$RC_BACKUPS_DIR'."
   exit 1
 fi
 

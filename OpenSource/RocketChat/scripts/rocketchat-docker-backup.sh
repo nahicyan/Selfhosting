@@ -128,7 +128,7 @@ echo "Using container: $MONGO_CONTAINER"
 
 # ── 5. Perform backup ────────────────────────────────────────
 DATE_STAMP=$(date +"%Y-%m-%d-%H-%M-%S")
-INSTANCE_DIR="${BACKUP_DIR}/rocketchat-${INSTANCE_NAME}/${DATE_STAMP}"
+INSTANCE_DIR="${BACKUP_DIR}/rocketchat/${INSTANCE_NAME}/${DATE_STAMP}"
 mkdir -p "$INSTANCE_DIR"
 BACKUP_FILE="${INSTANCE_DIR}/RC_${INSTANCE_NAME}_${DATE_STAMP}.dump"
 

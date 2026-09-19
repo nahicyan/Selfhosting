@@ -121,7 +121,7 @@ fi
 # The application backup does NOT include /etc/gitlab — losing gitlab-secrets.json
 # makes an existing backup undecryptable, so it must be saved alongside it.
 DATE_STAMP=$(date +"%Y-%m-%d-%H-%M-%S")
-INSTANCE_DIR="${BACKUP_DIR}/gitlab-${INSTANCE_NAME}/${DATE_STAMP}"
+INSTANCE_DIR="${BACKUP_DIR}/gitlab/${INSTANCE_NAME}/${DATE_STAMP}"
 mkdir -p "$INSTANCE_DIR"
 
 cp "$LATEST_TAR" "$INSTANCE_DIR/"

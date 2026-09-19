@@ -86,7 +86,7 @@ DOMAIN=$(basename "$SELECTED_PATH")
 DOMAIN_UNDERSCORE=$(echo "$DOMAIN" | tr '.' '_')
 
 TIMESTAMP=$(date +"%Y-%m-%d-%H-%M-%S")
-BACKUP_DEST="${BACKUP_PARENT}/frappe-lms-${DOMAIN}/${TIMESTAMP}"
+BACKUP_DEST="${BACKUP_PARENT}/frappe-lms/${DOMAIN}/${TIMESTAMP}"
 mkdir -p "$BACKUP_DEST"
 
 echo ""

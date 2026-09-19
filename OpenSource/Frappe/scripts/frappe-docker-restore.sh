@@ -45,12 +45,15 @@ BACKUP_BASE="${BACKUP_BASE%/}"
 
 [ -d "$BACKUP_BASE" ] || { echo "Error: '$BACKUP_BASE' not found."; exit 1; }
 
+FRAPPE_BACKUPS_DIR="$BACKUP_BASE/frappe-lms"
+[ -d "$FRAPPE_BACKUPS_DIR" ] || { echo "Error: '$FRAPPE_BACKUPS_DIR' not found."; exit 1; }
+
 # ── 2. Select instance (domain) ───────────────────────────────
 echo ""
-mapfile -t FRAPPE_DOMAIN_DIRS < <(find "$BACKUP_BASE" -maxdepth 1 -type d -name "frappe-lms-*" | sort)
+mapfile -t FRAPPE_DOMAIN_DIRS < <(find "$FRAPPE_BACKUPS_DIR" -maxdepth 1 -mindepth 1 -type d | sort)
 
 if [ ${#FRAPPE_DOMAIN_DIRS[@]} -eq 0 ]; then
-  echo "No frappe-lms-* backup folders found in '$BACKUP_BASE'."
+  echo "No instance backup folders found in '$FRAPPE_BACKUPS_DIR'."
   exit 1
 fi
 
@@ -71,7 +74,7 @@ else
   FRAPPE_DOMAIN_DIR="${FRAPPE_DOMAIN_DIRS[$((DOM_NUM-1))]}"
 fi
 
-DOMAIN="${FRAPPE_DOMAIN_DIR##*/frappe-lms-}"
+DOMAIN=$(basename "$FRAPPE_DOMAIN_DIR")
 
 # ── 3. List available backups ──────────────────────────────────
 _nice_date() {
