@@ -105,7 +105,7 @@ if [ -z "$MONGO_CONTAINER" ]; then
   MONGO_CONTAINER=$(docker ps --format "{{.Names}}" 2>/dev/null | \
     grep -i "${INSTANCE_NAME}.*mongo\|mongo.*${INSTANCE_NAME}\|${SANITIZED_NAME}.*mongo\|mongo.*${SANITIZED_NAME}" | \
     grep -iv "exporter" | head -n1 || true)
-fi
+fiOpenSource/GitLab/temp/request.txt
 
 # Third try: list all running mongo containers and ask user
 if [ -z "$MONGO_CONTAINER" ]; then
