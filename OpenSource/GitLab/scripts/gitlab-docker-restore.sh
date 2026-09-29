@@ -22,12 +22,15 @@ fi
 
 [ -d "$BACKUP_BASE" ] || { echo "Error: '$BACKUP_BASE' not found."; exit 1; }
 
+GITLAB_BACKUPS_DIR="$BACKUP_BASE/gitlab"
+[ -d "$GITLAB_BACKUPS_DIR" ] || { echo "Error: '$GITLAB_BACKUPS_DIR' not found."; exit 1; }
+
 # ── 2. Select instance (domain) ──────────────────────────────────────────────
 echo ""
-mapfile -t GITLAB_DOMAIN_DIRS < <(find "$BACKUP_BASE" -maxdepth 1 -type d -name "gitlab-*" | sort)
+mapfile -t GITLAB_DOMAIN_DIRS < <(find "$GITLAB_BACKUPS_DIR" -maxdepth 1 -mindepth 1 -type d | sort)
 
 if [ ${#GITLAB_DOMAIN_DIRS[@]} -eq 0 ]; then
-  echo "No gitlab-* backup folders found in '$BACKUP_BASE'."
+  echo "No instance backup folders found in '$GITLAB_BACKUPS_DIR'."
   exit 1
 fi
 
