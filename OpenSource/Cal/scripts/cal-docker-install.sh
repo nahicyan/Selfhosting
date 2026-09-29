@@ -3,25 +3,50 @@ set -euo pipefail
 # =============================================================================
 # Cal.diy Docker Install Script
 # =============================================================================
-# Follows the official "Running Cal.diy with Docker Compose" steps from the
-# cal.diy README (Deployment -> Docker), behind a host Nginx reverse proxy:
+# Follows the cal.diy README's Docker instructions (Deployment -> Docker ->
+# "Building from source with Docker"), behind a host Nginx reverse proxy:
 #
 #   1. git clone https://github.com/calcom/cal.diy.git
 #   2. cp .env.example .env, with NEXTAUTH_SECRET (openssl rand -base64 32)
-#      and CALENDSO_ENCRYPTION_KEY (openssl rand -base64 24) generated
-#   3. generate the VAPID keys web push needs
-#   4. docker compose pull
-#   5. docker compose up -d
-#   6. open the site - the first-run setup wizard creates the first user
+#      and CALENDSO_ENCRYPTION_KEY (openssl rand -base64 24) generated, plus
+#      the VAPID keys web push needs
+#   3. build the image (`docker compose build calcom`) against a database
+#   4. docker compose up -d
+#   5. open the site - the first-run setup wizard creates the first user
 #
 #   <install-dir>/              default /var/www/docker/cal/<domain>
 #     |-- docker-compose.yml    from the clone, adjusted as listed below
 #     `-- .env                  .env.example + the values above (mode 600)
 #
+# WHY THE IMAGE IS BUILT HERE. The README's `docker compose pull` route names
+# calcom.docker.scarf.sh/calcom/cal.diy, and Cal.diy has never published an
+# image under that name, on Docker Hub (calcom/cal.diy has no tags), on GHCR,
+# or anywhere else - `pull` fails with "not found". The only official way to
+# get an image is to build it, which is what upstream's own CI does.
+#
+# The build needs a reachable, empty PostgreSQL ("an available database is
+# currently required during the build process" - README). This script starts a
+# throwaway postgres container on Docker's default bridge, builds with the
+# database's bridge IP as DATABASE_URL, and deletes the container afterwards.
+# Nothing is published on the host and the build gets no network access to the
+# host's own loopback services; --network host would give it both, and the
+# README's DOCKER_BUILDKIT=0 route needs the deprecated legacy builder. The
+# build compiles Cal.diy with a 6 GB Node heap, so the script checks memory and
+# disk first (about 8 GiB of memory and 30 GiB of disk; the image is ~7 GiB and
+# the build cache another ~19 GiB, which `docker builder prune` reclaims). It
+# took under 8 minutes on a 32-core host and takes far longer on a small VPS.
+#
+# To skip the build - a small VPS, or an image built once elsewhere and pushed
+# to a registry - set CAL_IMAGE and the script pulls that instead:
+#     CAL_IMAGE=registry.example.com/cal-diy:v1 ./cal-docker-install.sh
+#
 # The cloned docker-compose.yml is used as-is except for these edits. Each one
 # is an exact-line match and the script stops if upstream has changed a line,
 # instead of guessing:
 #
+#   - The web app's image is a local name (cal-diy-<domain>:local), with
+#     pull_policy: never so `docker compose pull` does not go looking for it in
+#     a registry. With CAL_IMAGE it is that image, pulled normally.
 #   - The web app is published on 127.0.0.1:${CAL_PORT} instead of 0.0.0.0:3000.
 #     Nginx is the only public entry point.
 #   - The database service reads its user, password and name from .env. Upstream
@@ -29,10 +54,9 @@ set -euo pipefail
 #     DATABASE_URL from POSTGRES_* in .env - and .env.example does not define
 #     those, so they have to be written here and agree with the database.
 #   - postgres is pinned to 18. The volume path (/var/lib/postgresql) is the
-#     PostgreSQL 18+ layout, and the official update step is `docker compose
-#     pull`, which would otherwise follow `latest` into a major version that
-#     cannot open the existing data directory.
-#   - redis, calcom-api and studio are removed. The guide supports running the
+#     PostgreSQL 18+ layout, and an unpinned `latest` would follow the next
+#     major version into a data directory it cannot open.
+#   - redis, calcom-api and studio are removed. The README supports running the
 #     web app on its own (`docker compose up -d calcom`); calcom-api is the
 #     optional API v2 (built from source, and it publishes host port 80, which
 #     is Nginx's) and studio is Prisma Studio, which the compose file itself
@@ -41,20 +65,28 @@ set -euo pipefail
 #     every domain is its own Compose project. With them, two instances would
 #     collide on the container name and share one network, where both
 #     databases answer to the hostname "database".
-#
-# On ARM hosts the guide says to use the -arm image tag, so the script asks
-# for it and points the web app at calcom/cal.diy:<tag>.
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NGINX_CONF_SRC="$SCRIPT_DIR/../cal-nginx.conf"
 
 CAL_REPO="https://github.com/calcom/cal.diy.git"
+DEFAULT_REF="main"
+BUILD_DB_IMAGE="postgres:18"
+CAL_IMAGE="${CAL_IMAGE:-}"   # optional pre-built image; empty = build from source
 
 DEFAULT_BASE="/var/www/docker/cal"
 DEFAULT_PORT="3000"
 
+# What a build needs (see _preflight_build). Measured on a real build of main:
+# about 8 GiB of memory at peak (on a 32-core host; fewer cores use less), and
+# 26 GiB of disk at peak - the 7.4 GiB image plus 18.8 GiB of BuildKit cache -
+# so 30 leaves a little room for the base images.
+MIN_MEM_GIB=8
+MIN_DISK_GIB=30
+
 STARTED=false   # true from the clone until the stack is up: a failure in between leaves a half-made install, and _on_exit says how to clear it
+BUILD_DB=""     # name of the throwaway build database while it exists
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -62,6 +94,9 @@ _die() { echo "ERROR: $*" >&2; exit 1; }
 
 _on_exit() {
   local rc=$?
+  if [[ -n "$BUILD_DB" ]]; then
+    docker rm -f -v "$BUILD_DB" >/dev/null 2>&1 || true   # -v: also its anonymous data volume, which plain `rm -f` leaves behind
+  fi
   if [[ $rc -ne 0 && "$STARTED" == "true" ]]; then
     echo "" >&2
     echo "The install did not finish. $INSTALL_DIR is left as it is. To start over:" >&2
@@ -69,6 +104,8 @@ _on_exit() {
   fi
 }
 trap _on_exit EXIT
+trap 'exit 130' INT    # so Ctrl-C still runs _on_exit and removes the build database
+trap 'exit 143' TERM
 
 _valid_domain() {
   [[ "$1" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$ ]]
@@ -184,17 +221,101 @@ _gen_vapid() {
   [[ ${#VAPID_PRIVATE} -eq 43 && ${#VAPID_PUBLIC} -eq 87 ]]
 }
 
+# A build that runs out of memory dies half an hour in with a bare "Killed", so
+# say so up front. RAM plus swap counts: swap is the usual fix on a small VPS.
+_preflight_build() {
+  local mem_kib docker_root free_kib low=false
+  mem_kib="$(awk '/^(MemTotal|SwapTotal):/ { s += $2 } END { print s + 0 }' /proc/meminfo)"
+  docker_root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)"
+  free_kib="$(df -Pk "${docker_root:-/var/lib/docker}" 2>/dev/null | awk 'NR==2 { print $4 }')"
+  [[ "$free_kib" =~ ^[0-9]+$ ]] || free_kib="$(df -Pk / | awk 'NR==2 { print $4 }')"
+
+  if (( mem_kib < MIN_MEM_GIB * 1024 * 1024 )); then
+    low=true
+    echo ""
+    echo "WARNING: this host has $(( mem_kib / 1024 / 1024 )) GiB of memory (RAM + swap). Building Cal.diy needs about"
+    echo "         $MIN_MEM_GIB GiB, and a build that runs out of memory is killed part-way through."
+    echo "         Add swap (fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile"
+    echo "         && swapon /swapfile), or build the image elsewhere and re-run with CAL_IMAGE=..."
+  fi
+  if (( free_kib < MIN_DISK_GIB * 1024 * 1024 )); then
+    low=true
+    echo ""
+    echo "WARNING: only $(( free_kib / 1024 / 1024 )) GiB is free where Docker stores its data (${docker_root:-/var/lib/docker});"
+    echo "         a build needs about $MIN_DISK_GIB GiB at its peak (a ~7 GiB image plus ~19 GiB of build cache,"
+    echo "         which you can reclaim afterwards). Free up space, or build elsewhere and use CAL_IMAGE=..."
+  fi
+  if [[ "$low" == "true" ]]; then
+    read -rp "Continue anyway? [y/N] " ans_low
+    [[ "$ans_low" =~ ^[Yy]$ ]] || _die "Aborted - free up memory/disk, or use CAL_IMAGE."
+  fi
+}
+
+# Build the web app's image the way the README describes, with the empty
+# database it needs (see the header).
+_build_image() {
+  local pw ip i last
+  pw="$(openssl rand -hex 16)"
+  echo "==> Starting a throwaway PostgreSQL ($BUILD_DB_IMAGE) for the build"
+  BUILD_DB="cal-build-db-$$"
+  docker run -d --rm --name "$BUILD_DB" \
+    -e POSTGRES_USER=build -e POSTGRES_PASSWORD="$pw" -e POSTGRES_DB=calendso \
+    "$BUILD_DB_IMAGE" >/dev/null || _die "could not start the throwaway build database."
+  # Docker 29 dropped the top-level .NetworkSettings.IPAddress; read the per-network one.
+  ip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$BUILD_DB")"
+  [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || _die "could not read the build database's IP address (got '$ip')."
+
+  # Wait until it accepts connections over the network, from a container on the
+  # same bridge the build steps use. That is both the readiness check (an
+  # in-container check can pass during postgres's init phase, before TCP is up)
+  # and the reachability check, so a bridge that cannot carry it fails here and
+  # not half an hour into the build.
+  echo -n "==> Waiting for it to accept connections at $ip:5432"
+  for i in $(seq 1 60); do
+    if last="$(docker run --rm "$BUILD_DB_IMAGE" pg_isready -h "$ip" -p 5432 -U build -d calendso 2>&1)"; then
+      break
+    fi
+    if [[ $i -eq 60 ]]; then
+      echo ""
+      _die "the build database did not become reachable at $ip:5432 from the default Docker bridge. Last answer: ${last:-(none)}. If that is a Docker error (image pull, daemon), fix it first; otherwise check whether inter-container communication is disabled (icc=false)."
+    fi
+    echo -n "."
+    sleep 2
+  done
+  echo ""
+
+  echo "==> Building the Cal.diy image (compiles the app; several minutes on a big host, far longer on a small VPS)"
+  DATABASE_URL="postgresql://build:$pw@$ip:5432/calendso" docker compose build calcom \
+    || _die "the Cal.diy build failed - see the output above. If it ended in 'Killed' or exit code 137 the host ran out of memory: add swap, or build the image elsewhere and re-run with CAL_IMAGE=... (see the top of this script)."
+
+  docker rm -f -v "$BUILD_DB" >/dev/null 2>&1 || true
+  BUILD_DB=""
+  docker image inspect "$IMAGE_REF" >/dev/null 2>&1 || _die "the build finished but the image $IMAGE_REF is not there."
+  echo "==> Built $IMAGE_REF"
+  echo "    The build left about 19 GiB of BuildKit cache behind. It only speeds up a rebuild, and"
+  echo "    'docker builder prune' reclaims it (it clears every unused build cache on this host)."
+}
+
 # ── Dependency check ──────────────────────────────────────────────────────────
 for cmd in git docker curl openssl od base64 awk sed mktemp; do
   command -v "$cmd" >/dev/null 2>&1 || _die "'$cmd' is required but not installed."
 done
 docker compose version >/dev/null 2>&1 || _die "the Docker Compose plugin ('docker compose') is required."
+docker info >/dev/null 2>&1 || _die "cannot reach the Docker daemon - is it running, and is this user allowed to use it?"
 [ -f "$NGINX_CONF_SRC" ] || _die "cal-nginx.conf not found at $NGINX_CONF_SRC"
+if [[ -n "$CAL_IMAGE" ]]; then
+  [[ "$CAL_IMAGE" =~ ^[A-Za-z0-9._/:@-]+$ ]] || _die "CAL_IMAGE '$CAL_IMAGE' is not a valid image reference."
+fi
 
 echo ""
 echo "=====> Cal.diy Install"
 echo "========================================"
 echo "Source: $CAL_REPO"
+if [[ -n "$CAL_IMAGE" ]]; then
+  echo "Image : $CAL_IMAGE (pre-built, from CAL_IMAGE)"
+else
+  echo "Image : built from source on this host"
+fi
 echo ""
 
 # ── 1. Domain ─────────────────────────────────────────────────────────────────
@@ -229,17 +350,16 @@ if _port_in_use "$port"; then
   [[ "$ans_port" =~ ^[Yy]$ ]] || _die "Aborted - pick a free port."
 fi
 
-# ── 4. Image tag (ARM only) ───────────────────────────────────────────────────
-image_tag=""
-case "$(uname -m)" in
-  aarch64|arm64|armv8*)
-    echo ""
-    echo "This is an ARM host. The Cal.diy guide says to pull the image with the"
-    echo "-arm suffix, e.g. calcom/cal.diy:v5.6.19-arm (see hub.docker.com/r/calcom/cal.diy)."
-    read -rp "Image tag: " image_tag
-    [[ "$image_tag" =~ ^[A-Za-z0-9._-]+-arm$ ]] || _die "The tag must end in -arm (e.g. v5.6.19-arm)."
-    ;;
-esac
+# ── 4. Version ────────────────────────────────────────────────────────────────
+# `main` is what the README's `git clone` gives you. A release tag (e.g. v6.2.0)
+# pins the version instead. It is checked against the repo now, so a typo fails
+# here and not after the prompts.
+echo ""
+read -rp "Branch or tag to install [$DEFAULT_REF]: " answer
+ref="${answer:-$DEFAULT_REF}"
+[[ "$ref" =~ ^[A-Za-z0-9._/-]+$ ]] || _die "'$ref' is not a valid branch or tag name."
+git ls-remote --exit-code "$CAL_REPO" "refs/heads/$ref" "refs/tags/$ref" >/dev/null 2>&1 \
+  || _die "'$ref' is not a branch or tag of $CAL_REPO (or the repository could not be reached)."
 
 # ── 5. SMTP ───────────────────────────────────────────────────────────────────
 configure_smtp=false
@@ -265,10 +385,14 @@ if [[ "$ans_smtp" =~ ^[Yy]$ ]]; then
   done
 fi
 
+# ── Build requirements ────────────────────────────────────────────────────────
+[[ -n "$CAL_IMAGE" ]] || _preflight_build
+
 # ── Derived values ────────────────────────────────────────────────────────────
 PROJECT_NAME="cal-${domain//./-}"
 ENV_FILE="$INSTALL_DIR/.env"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
+IMAGE_REF="${CAL_IMAGE:-cal-diy-${domain//./-}:local}"
 
 nextauth_secret="$(openssl rand -base64 32)"
 encryption_key="$(openssl rand -base64 24)"
@@ -287,11 +411,12 @@ echo "URL             : https://$domain"
 echo "Install dir     : $INSTALL_DIR"
 echo "Host port       : 127.0.0.1:$port  ->  container :3000"
 echo "Compose project : $PROJECT_NAME"
+echo "Version         : $ref"
 echo "Stack           : Cal.diy web app + PostgreSQL (docker volume database-data)"
-if [[ -n "$image_tag" ]]; then
-  echo "Image           : calcom/cal.diy:$image_tag"
+if [[ -n "$CAL_IMAGE" ]]; then
+  echo "Image           : $CAL_IMAGE (pulled)"
 else
-  echo "Image           : calcom.docker.scarf.sh/calcom/cal.diy (as in the compose file)"
+  echo "Image           : $IMAGE_REF (built from source - needs ~8 GiB memory, ~30 GiB disk, and time)"
 fi
 if [[ "$configure_smtp" == "true" ]]; then
   echo "SMTP host       : $smtp_host:$smtp_port"
@@ -314,9 +439,9 @@ read -rp "Proceed? [Y/n] " ans_proceed
 
 # ── Clone ─────────────────────────────────────────────────────────────────────
 echo ""
-echo "==> Cloning $CAL_REPO"
+echo "==> Cloning $CAL_REPO ($ref)"
 sudo mkdir -p "$(dirname "$INSTALL_DIR")"
-sudo git clone --depth 1 --recursive "$CAL_REPO" "$INSTALL_DIR" \
+sudo git clone --depth 1 --branch "$ref" --recursive "$CAL_REPO" "$INSTALL_DIR" \
   || _die "clone failed - check network access to $CAL_REPO"
 STARTED=true
 sudo chown -R "$(id -u):$(id -g)" "$INSTALL_DIR"
@@ -324,7 +449,8 @@ chmod 750 "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 [ -f "$COMPOSE_FILE" ] || _die "docker-compose.yml is not in the cloned repo."
 [ -f .env.example ]    || _die ".env.example is not in the cloned repo."
-echo "==> Cloned to $INSTALL_DIR ($(git -C "$INSTALL_DIR" rev-parse --short HEAD))"
+built_from="$(git -C "$INSTALL_DIR" rev-parse --short HEAD)"
+echo "==> Cloned to $INSTALL_DIR ($ref @ $built_from)"
 
 # ── Write .env ────────────────────────────────────────────────────────────────
 echo "==> Writing .env"
@@ -361,7 +487,7 @@ _env_set "$ENV_FILE" DATABASE_HOST     "database:5432"
 _env_set "$ENV_FILE" DATABASE_URL         "postgresql://$postgres_user:$postgres_password@database:5432/$postgres_db"
 _env_set "$ENV_FILE" DATABASE_DIRECT_URL  "postgresql://$postgres_user:$postgres_password@database:5432/$postgres_db"
 
-# Still named in the compose file's build args; unused by the pre-built image.
+# Still named in the compose file's build args, so it must be defined.
 _env_set "$ENV_FILE" NEXT_PUBLIC_LICENSE_CONSENT "true"
 _env_set "$ENV_FILE" CALCOM_TELEMETRY_DISABLED   "1"
 
@@ -391,9 +517,23 @@ _compose_edit '      - POSTGRES_USER=unicorn_user'      '      - POSTGRES_USER=$
 _compose_edit '      - POSTGRES_PASSWORD=magical_password' '      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}'
 _compose_edit '      - POSTGRES_DB=calendso'            '      - POSTGRES_DB=${POSTGRES_DB}'
 _compose_edit '      - 3000:3000'                       '      - "127.0.0.1:${CAL_PORT:-3000}:3000"'
-if [[ -n "$image_tag" ]]; then
-  _compose_edit '    image: calcom.docker.scarf.sh/calcom/cal.diy' "    image: calcom/cal.diy:$image_tag"
-fi
+
+# The web app's image line names calcom/cal.diy at the scarf gateway on main
+# and calcom/cal.com in the v6.2.0 release; either way that image is not one we
+# can use, so it is replaced.
+image_edited=false
+for old in '    image: calcom.docker.scarf.sh/calcom/cal.diy' '    image: calcom.docker.scarf.sh/calcom/cal.com'; do
+  if grep -qxF "$old" "$COMPOSE_FILE"; then
+    if [[ -n "$CAL_IMAGE" ]]; then
+      _compose_edit "$old" "    image: $IMAGE_REF"
+    else
+      _compose_edit "$old" "    image: $IMAGE_REF"$'\n'"    pull_policy: never"
+    fi
+    image_edited=true
+    break
+  fi
+done
+[[ "$image_edited" == "true" ]] || _die "docker-compose.yml no longer has the calcom image line - upstream has changed; update $(basename "$0")."
 
 echo "==> Validating docker-compose.yml against .env..."
 docker compose config --quiet || _die "docker-compose.yml did not validate with this .env."
@@ -409,13 +549,25 @@ read -rp "Would you like to review/edit .env? [y/N] " ans_env
 read -rp "Would you like to review/edit docker-compose.yml? [y/N] " ans_compose
 [[ "$ans_compose" =~ ^[Yy]$ ]] && "${EDITOR:-vim}" "$COMPOSE_FILE"
 
-# ── Start ─────────────────────────────────────────────────────────────────────
+# ── Get the image ─────────────────────────────────────────────────────────────
 echo ""
-echo "==> Pulling images (the Cal.diy image is large - this can take a while)..."
-docker compose pull
+echo "==> Pulling PostgreSQL..."
+docker compose pull database
+if [[ -n "$CAL_IMAGE" ]]; then
+  if docker image inspect "$CAL_IMAGE" >/dev/null 2>&1; then
+    echo "==> $CAL_IMAGE is already on this host."
+  else
+    echo "==> Pulling $CAL_IMAGE..."
+    docker compose pull calcom || _die "could not pull $CAL_IMAGE - check the name, and 'docker login' if it is private."
+  fi
+else
+  _build_image
+fi
+
+# ── Start ─────────────────────────────────────────────────────────────────────
 echo "==> Starting Cal.diy and PostgreSQL..."
-# --no-build: the compose file can also build the image from source, which takes
-# far longer and needs a different setup. If the pull left no image, fail here.
+# --no-build: the image is already there, and a stray rebuild here would fail
+# without the build database.
 docker compose up -d --no-build
 STARTED=false   # the stack is running: a failure from here on leaves a working install to fix, not to delete
 
@@ -491,7 +643,8 @@ echo "    Next         : open the URL - the setup wizard creates your first user
 echo "                   If it insists on connecting a calendar, skip it by opening"
 echo "                   https://$domain/event-types (add calendars later under"
 echo "                   Settings -> Integrations)."
-echo "    Install dir  : $INSTALL_DIR  (clone of $CAL_REPO)"
+echo "    Install dir  : $INSTALL_DIR  (clone of $CAL_REPO, $ref @ $built_from)"
+echo "    Image        : $IMAGE_REF"
 echo "    Database     : docker volume database-data (PostgreSQL)"
 echo "    Secrets      : $ENV_FILE (mode 600 - back this up)"
 if [[ "$configure_smtp" != "true" ]]; then
@@ -505,7 +658,9 @@ echo "    Stop    : docker compose down"
 echo "    Restart : docker compose restart"
 echo "    Logs    : docker compose logs -f calcom"
 echo "    Status  : docker compose ps"
-echo "    Update  : docker compose down && docker compose pull && docker compose up -d"
+if [[ -n "$CAL_IMAGE" ]]; then
+  echo "    Update  : docker compose down && docker compose pull && docker compose up -d"
+fi
 echo ""
 echo "    If sign-in fails with CLIENT_FETCH_ERROR in the logs, the container cannot"
 echo "    reach https://$domain from inside Docker; the Cal.diy README (Troubleshooting)"
