@@ -443,8 +443,11 @@ $DC up -d
 echo -n "==> Waiting for Keycloak to respond on 127.0.0.1:$port"
 KC_UP=false
 for _ in $(seq 1 90); do
+  # curl already prints 000 when it gets no answer, so the fallback is only
+  # `|| true` (to survive set -e). `|| echo "000"` would make it 000000, which
+  # passes the checks below and reports Keycloak as up before it is.
   CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 \
-    "http://127.0.0.1:${port}/realms/master" 2>/dev/null || echo "000")
+    "http://127.0.0.1:${port}/realms/master" 2>/dev/null || true)
   if [ "$CODE" != "000" ] && [ "$CODE" -lt 500 ]; then
     KC_UP=true
     break
