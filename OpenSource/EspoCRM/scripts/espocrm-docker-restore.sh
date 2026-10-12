@@ -25,7 +25,9 @@ set -euo pipefail
 #
 # What happens, in order:
 #   1. The snapshot is verified (gzip integrity, the dump's "-- Dump completed"
-#      trailer, config files present in the archive) before anything changes.
+#      trailer, config files present in the archive), and its files are
+#      test-loaded on the target's EspoCRM in a throwaway container - all
+#      before anything changes.
 #   2. Optional safety snapshot of the target, made with
 #      espocrm-docker-backup.sh, so the restore can itself be undone.
 #   3. espocrm, espocrm-daemon and espocrm-websocket are stopped (MariaDB stays up).
@@ -75,6 +77,42 @@ _env_get() {  # _env_get <file> <key> - read, not sourced (see the backup script
   v="$(sed -n "s/^${2}=//p" "$1" | tail -n1)"
   if [[ "$v" == \'*\' || "$v" == \"*\" ]]; then v="${v:1:${#v}-2}"; fi
   printf '%s' "$v"
+}
+
+# The files step, run twice: first as a dry run in a throwaway container with
+# no volumes (uploads skipped), then for real against the stopped app's volumes.
+# It empties data, custom and client/custom, extracts the snapshot, and sets the
+# database credentials to the target's with EspoCRM's own `config:set` (how the
+# entrypoint writes them at install). The snapshot's config-internal.php
+# carries the source instance's password. Then ownership goes back to
+# www-data. bin/command only reports errors to data/logs, so on failure the
+# new ERROR lines from there are printed.
+# shellcheck disable=SC2016  # runs in the helper container's shell
+FILES_STEP='
+set -e
+cd /var/www/html
+find data custom client/custom -mindepth 1 -delete
+tar -xzf - $TAR_EXCLUDE
+test -s data/config-internal.php
+log_lines=$(cat data/logs/*.log 2>/dev/null | wc -l)
+cfg() {
+  if ! bin/command config:set "$1" "$2" >/dev/null 2>&1; then
+    echo "EspoCRM cannot run on the snapshot files (bin/command config:set $1 failed). From its log:" >&2
+    cat data/logs/*.log 2>/dev/null | tail -n +$((log_lines + 1)) | grep ERROR | tail -n 3 | cut -c1-400 >&2 || true
+    exit 1
+  fi
+}
+cfg database.host espocrm-db
+cfg database.dbname espocrm
+cfg database.user espocrm
+cfg database.password "$ESPO_DB_PW"
+rm -rf data/cache
+chown -R www-data:www-data data custom client/custom
+'
+
+_files_step() {  # _files_step [docker run options] < files.tar.gz   (TAR_EXCLUDE from the environment)
+  ESPO_DB_PW="$DB_PASSWORD" docker run --rm -i --network none -e ESPO_DB_PW -e TAR_EXCLUDE "$@" \
+    --entrypoint sh "$APP_IMAGE_ID" -c "$FILES_STEP"
 }
 
 _on_exit() {
@@ -271,7 +309,17 @@ elif [ "$SNAP_VERSION" != "$TARGET_VERSION" ]; then
   [[ "$ANS_VER" =~ ^[Yy]$ ]] || { echo "Restore cancelled."; exit 0; }
 fi
 
-# ── 7. Safety snapshot ────────────────────────────────────────────────────────
+# ── 7. Test-load the snapshot's files ─────────────────────────────────────────
+# Customizations the target's EspoCRM cannot load (broken metadata, extension
+# code written for another version) fail here, before anything is changed,
+# instead of halfway through the restore.
+echo ""
+echo "Test-loading the snapshot's files on EspoCRM ${TARGET_VERSION:-?} (throwaway container)..."
+TAR_EXCLUDE="--exclude=data/upload" _files_step < "$SNAP_FILES" \
+  || _die "the snapshot's files do not load on the target's EspoCRM (see above)."
+echo "  OK"
+
+# ── 8. Safety snapshot ────────────────────────────────────────────────────────
 echo ""
 echo "A safety snapshot saves the target's CURRENT database and files to"
 echo "$BACKUP_ROOT/espocrm/$DOMAIN/ before anything is replaced, so the restore"
@@ -279,7 +327,7 @@ echo "can be undone."
 read -rp "Take a safety snapshot first? [Y/n]: " ANS_SAFETY
 if [[ "$ANS_SAFETY" =~ ^[Nn]$ ]]; then DO_SAFETY=false; else DO_SAFETY=true; fi
 
-# ── 8. Final confirmation ─────────────────────────────────────────────────────
+# ── 9. Final confirmation ─────────────────────────────────────────────────────
 echo ""
 echo "==================== RESTORE SUMMARY ===================="
 echo "Backup snapshot : $SNAPSHOT_DIR"
@@ -301,7 +349,7 @@ echo ""
 read -rp "Type 'yes' to confirm and proceed: " CONFIRM
 [ "$CONFIRM" = "yes" ] || { echo "Restore cancelled."; exit 0; }
 
-# ── 9. MariaDB must be up (for the safety snapshot and the restore) ───────────
+# ── 10. MariaDB must be up (for the safety snapshot and the restore) ───────────
 if [ -z "$(dc ps -q espocrm-db 2>/dev/null || true)" ]; then
   echo ""
   echo "=== Starting MariaDB ==="
@@ -310,7 +358,7 @@ fi
 DB_CID="$(dc ps -q espocrm-db)"
 [ -n "$DB_CID" ] || _die "espocrm-db is not running."
 
-# ── 10. Safety snapshot ───────────────────────────────────────────────────────
+# ── 11. Safety snapshot ───────────────────────────────────────────────────────
 # Made by the backup script in unattended mode, with pruning off: pruning here
 # could delete the very snapshot being restored.
 if $DO_SAFETY; then
@@ -332,7 +380,7 @@ if $DO_SAFETY; then
   fi
 fi
 
-# ── 11. Lock ──────────────────────────────────────────────────────────────────
+# ── 12. Lock ──────────────────────────────────────────────────────────────────
 # Shared with the backup script. Waits for a running backup to finish; a
 # scheduled backup that starts during the restore fails instead of dumping a
 # half-restored database.
@@ -341,14 +389,14 @@ echo ""
 echo "Waiting for the instance lock..."
 flock -w 600 9 || _die "another backup or restore of $DOMAIN is still running."
 
-# ── 12. Stop EspoCRM ──────────────────────────────────────────────────────────
+# ── 13. Stop EspoCRM ──────────────────────────────────────────────────────────
 echo ""
 echo "=== Stopping espocrm, espocrm-daemon, espocrm-websocket ==="
 CHANGED=true
 STOPPED=true
 dc stop espocrm-daemon espocrm-websocket espocrm
 
-# ── 13. Database ──────────────────────────────────────────────────────────────
+# ── 14. Database ──────────────────────────────────────────────────────────────
 # Root password from the container's own environment, passed as MYSQL_PWD (not
 # visible in `ps`). The espocrm user's grants are on `espocrm`.* and survive
 # the drop.
@@ -361,31 +409,14 @@ echo "Loading dump..."
 gunzip -c "$SNAP_DUMP" | docker exec -i "$DB_CID" sh -c 'MYSQL_PWD="$MARIADB_ROOT_PASSWORD" exec mariadb -uroot espocrm'
 echo "Database restored."
 
-# ── 14. Files ─────────────────────────────────────────────────────────────────
-# Through a helper container from the target's image, as root, against the
-# stopped app's volumes. The snapshot's config-internal.php carries the source
-# instance's database password, so the credentials are set to the target's
-# with EspoCRM's own `config:set` (how the entrypoint writes them at install),
-# before ownership goes back to www-data.
+# ── 15. Files ─────────────────────────────────────────────────────────────────
+# The step the dry run tested, now against the stopped app's volumes.
 echo ""
 echo "=== Restoring files (data, custom, client/custom) ==="
-ESPO_DB_PW="$DB_PASSWORD" docker run --rm -i --network none -e ESPO_DB_PW \
-  --volumes-from "$APP_CID" --entrypoint sh "$APP_IMAGE_ID" -c '
-  set -e
-  cd /var/www/html
-  find data custom client/custom -mindepth 1 -delete
-  tar -xzf -
-  test -s data/config-internal.php
-  bin/command config:set database.host espocrm-db >/dev/null
-  bin/command config:set database.dbname espocrm >/dev/null
-  bin/command config:set database.user espocrm >/dev/null
-  bin/command config:set database.password "$ESPO_DB_PW" >/dev/null
-  rm -rf data/cache
-  chown -R www-data:www-data data custom client/custom
-' < "$SNAP_FILES"
+TAR_EXCLUDE="" _files_step --volumes-from "$APP_CID" < "$SNAP_FILES"
 echo "Files restored; database credentials set to the target's."
 
-# ── 15. Start EspoCRM ─────────────────────────────────────────────────────────
+# ── 16. Start EspoCRM ─────────────────────────────────────────────────────────
 # Ready = Apache answers: the entrypoint runs migrations first and only then
 # starts Apache. Repeated restarts mean the migration failed.
 echo ""

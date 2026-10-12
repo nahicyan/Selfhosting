@@ -232,9 +232,11 @@ manifest.txt                domain, EspoCRM version, images, type
   files are archived *after* the dump: a file uploaded in between becomes an
   orphan in the archive, never a database row pointing at a missing file.
 - **Verified.** The dump must pass `gzip -t` and end with mariadb-dump's
-  `-- Dump completed` trailer, and the archive must contain `config.php` and
-  `config-internal.php`. Otherwise the half-written snapshot is deleted and
-  the script exits non-zero.
+  `-- Dump completed` trailer, and the archive must contain `config.php`,
+  `config-internal.php` and `state.php` (where EspoCRM 10 records the version
+  its data was migrated to). Otherwise the half-written snapshot is deleted
+  and the script exits non-zero. The same cleanup runs if the script is
+  interrupted.
 - **Works on a broken app.** Files are read through a throwaway container
   that mounts the app's volumes read-only, so only `espocrm-db` needs to be
   running.
@@ -284,8 +286,11 @@ The target can be:
 
 What happens:
 
-1. The snapshot is verified (gzip, dump trailer, config files) before anything
-   changes.
+1. The snapshot is verified (gzip, dump trailer, config files). Then its files
+   are **test-loaded** on the target's EspoCRM, in a throwaway container with
+   no volumes. Customizations the target can't load (broken metadata, extension
+   code for another version) are refused here with the error from EspoCRM's
+   log, and the target is never touched.
 2. Optional **safety snapshot** of the target, made by the backup script, so
    the restore can be undone with this same script (shown as `pre-restore`).
 3. `espocrm`, `espocrm-daemon` and `espocrm-websocket` are stopped. MariaDB
@@ -297,6 +302,10 @@ What happens:
 6. `espocrm` starts. Its entrypoint clears the cache and runs migrations. The
    script waits until it answers, stops early with the log if it crash-loops,
    then starts the daemon and websocket.
+
+If anything fails after step 3, the script says so, tells you how to start the
+instance as it is, and gives the path of the safety snapshot. Restoring that
+snapshot with the same script undoes the restore.
 
 The target's EspoCRM version must be the snapshot's or newer, because
 migrations only run forward. A newer target migrates the restored data on
