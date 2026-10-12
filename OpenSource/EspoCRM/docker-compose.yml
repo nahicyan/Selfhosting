@@ -1,0 +1,170 @@
+# EspoCRM - open-source CRM (https://www.espocrm.com)
+#
+# Upstream ships no compose file to download. This is the production
+# docker-compose.yml from EspoCRM's Docker documentation, which uses the
+# EspoCRM 10 volume layout:
+#   https://docs.espocrm.com/administration/docker/installation/#docker-compose
+# It is NOT the example in the espocrm-docker README. That one still mounts all
+# of /var/www/html, which the v10 entrypoint flags as "LEGACY INSTALLATION
+# METHOD DETECTED ... No further EspoCRM upgrades will be available."
+#
+# Changes from the docs, so it runs as one of several instances behind the
+# host Nginx:
+#   - No container_name. Each domain is its own Compose project
+#     (COMPOSE_PROJECT_NAME in .env), so containers, volumes and the network are
+#     all prefixed per instance and never collide. Service names are unchanged,
+#     so every `docker compose ...` command in the EspoCRM docs still works.
+#   - Ports are published on 127.0.0.1 only. Nginx is the public entry point and
+#     terminates TLS. It proxies /wss to the WebSocket server, the path EspoCRM's
+#     client uses for an https:// site URL (client/src/web-socket-manager.js).
+#   - Images are pinned from .env, not :latest. EspoCRM migrates its database on
+#     every start, so a floating tag turns any `pull` into an upgrade nobody
+#     chose. MariaDB is pinned to its LTS line for the same reason.
+#   - Values come from .env (written by scripts/espocrm-docker-install.sh).
+#   - The app healthcheck also requires Apache to answer, and has a longer
+#     start_period. Without that, "healthy" arrives before the install is done.
+#   - Additions, each explained where it is used: MARIADB_AUTO_UPGRADE,
+#     --max-allowed-packet=64MB, ESPOCRM_TIME_ZONE, ESPOCRM_CONFIG_SITE_URL,
+#     ESPOCRM_CONFIG_IP_ADDRESS_SERVER_PARAM, and log rotation.
+#
+# Data lives in four named volumes, <project>_espocrm-db / -data / -custom /
+# -custom-client. `docker compose down` keeps them; `down -v` DELETES them.
+#
+# Run from the install directory:  docker compose up -d
+
+# Docker's default json-file driver never rotates, and Apache logs every request
+# to stdout. Remove this block (and the `logging:` lines) if the host's
+# /etc/docker/daemon.json already sets log rotation.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+
+  espocrm-db:
+    image: mariadb:${MARIADB_VERSION:?set MARIADB_VERSION in .env}
+    # From EspoCRM's official installer (espocrm-installer). Large emails and
+    # imports exceed MariaDB's default packet size.
+    command: --max-allowed-packet=64MB
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:?set MARIADB_ROOT_PASSWORD in .env}
+      MARIADB_DATABASE: espocrm
+      MARIADB_USER: espocrm
+      MARIADB_PASSWORD: ${ESPOCRM_DATABASE_PASSWORD:?set ESPOCRM_DATABASE_PASSWORD in .env}
+      # Runs mariadb-upgrade when a newer MariaDB image starts on old data, which
+      # a MARIADB_VERSION bump needs.
+      MARIADB_AUTO_UPGRADE: "1"
+    volumes:
+      - espocrm-db:/var/lib/mysql
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 20s
+      start_period: 10s
+      timeout: 10s
+      retries: 3
+    logging: *logging
+
+  espocrm:
+    image: espocrm/espocrm:${ESPOCRM_VERSION:?set ESPOCRM_VERSION in .env}
+    environment:
+      # Installation variables, read on the FIRST start only (empty database).
+      # Changing them afterwards does nothing.
+      ESPOCRM_DATABASE_HOST: espocrm-db
+      ESPOCRM_DATABASE_USER: espocrm
+      ESPOCRM_DATABASE_PASSWORD: ${ESPOCRM_DATABASE_PASSWORD:?set ESPOCRM_DATABASE_PASSWORD in .env}
+      # Fixed: the v10 entrypoint runs `create-admin-user $ESPOCRM_ADMIN_USERNAME`
+      # but then `set-password admin`, so any other name fails the install.
+      # Rename the user in the UI afterwards if you want.
+      ESPOCRM_ADMIN_USERNAME: admin
+      ESPOCRM_ADMIN_PASSWORD: ${ESPOCRM_ADMIN_PASSWORD:?set ESPOCRM_ADMIN_PASSWORD in .env}
+      ESPOCRM_SITE_URL: "https://${ESPOCRM_DOMAIN:?set ESPOCRM_DOMAIN in .env}"
+      ESPOCRM_TIME_ZONE: ${ESPOCRM_TIME_ZONE:-UTC}
+      # Config variables, applied on EVERY start (ESPOCRM_CONFIG_<SNAKE_CASE>).
+      # siteUrl again, so changing ESPOCRM_DOMAIN in .env actually takes effect.
+      # The official installer sets it this way too.
+      ESPOCRM_CONFIG_SITE_URL: "https://${ESPOCRM_DOMAIN}"
+      # Behind Nginx, REMOTE_ADDR is always the Docker gateway. EspoCRM's failed-
+      # login limit counts per IP, so ten bad logins from anyone would lock out
+      # everyone. Use the X-Real-IP header Nginx sets instead. It cannot be
+      # spoofed from outside, because this port only listens on 127.0.0.1.
+      ESPOCRM_CONFIG_IP_ADDRESS_SERVER_PARAM: "HTTP_X_REAL_IP"
+    volumes:
+      - espocrm-data:/var/www/html/data
+      - espocrm-custom:/var/www/html/custom
+      - espocrm-custom-client:/var/www/html/client/custom
+    restart: unless-stopped
+    depends_on:
+      espocrm-db:
+        condition: service_healthy
+    healthcheck:
+      # The docs test app-check alone. That passes a few seconds into the first
+      # start, while the install is still running, because Docker 25+ probes
+      # every 5s during start_period. The entrypoint only starts Apache once
+      # install/migrations are done, so also require Apache to answer. Then
+      # "healthy" means ready, and the daemon and websocket (depends_on:
+      # service_healthy) cannot start mid-install or mid-upgrade and race it
+      # writing data/config.php.
+      test: ["CMD-SHELL", "bin/command app-check >/dev/null && curl -fsS -o /dev/null http://localhost/"]
+      # The docs use 20s. A first install or an upgrade migration can take
+      # minutes on a small VPS. Failures inside start_period are not counted,
+      # so this only stops a slow start from being marked unhealthy. That would
+      # also stop the daemon and websocket containers from starting.
+      start_period: 5m
+      interval: 60s
+      timeout: 20s
+      retries: 3
+    ports:
+      - "127.0.0.1:${ESPOCRM_PORT:?set ESPOCRM_PORT in .env}:80"
+    logging: *logging
+
+  # Runs scheduled jobs (EspoCRM's cron), so the host needs no crontab.
+  espocrm-daemon:
+    image: espocrm/espocrm:${ESPOCRM_VERSION}
+    volumes_from:
+      - espocrm
+    restart: unless-stopped
+    entrypoint: docker-daemon.sh
+    depends_on:
+      espocrm:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "bin/command", "app-check"]
+      start_period: 20s
+      interval: 180s
+      timeout: 20s
+      retries: 3
+    logging: *logging
+
+  # Real-time notifications, reminders and stream/detail-view updates.
+  espocrm-websocket:
+    image: espocrm/espocrm:${ESPOCRM_VERSION}
+    environment:
+      ESPOCRM_CONFIG_USE_WEB_SOCKET: "true"
+      ESPOCRM_CONFIG_WEB_SOCKET_URL: "wss://${ESPOCRM_DOMAIN}/wss"
+      ESPOCRM_CONFIG_WEB_SOCKET_ZERO_M_Q_SUBSCRIBER_DSN: "tcp://*:7777"
+      ESPOCRM_CONFIG_WEB_SOCKET_ZERO_M_Q_SUBMISSION_DSN: "tcp://espocrm-websocket:7777"
+    volumes_from:
+      - espocrm
+    restart: unless-stopped
+    entrypoint: docker-websocket.sh
+    depends_on:
+      espocrm:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "bin/command", "app-check"]
+      start_period: 20s
+      interval: 180s
+      timeout: 20s
+      retries: 3
+    ports:
+      - "127.0.0.1:${ESPOCRM_WS_PORT:?set ESPOCRM_WS_PORT in .env}:8080"
+    logging: *logging
+
+volumes:
+  espocrm-db:
+  espocrm-data:
+  espocrm-custom:
+  espocrm-custom-client:
