@@ -181,6 +181,7 @@ All Docker Links
 ```yml
 server {
     listen 80;
+    listen [::]:80;
     server_name meet.example.com;
     access_log off;
     location /.well-known/acme-challenge/ { allow all; }
@@ -189,6 +190,7 @@ server {
 
 server {
     listen 443 ssl http2;
+    listen [::]:443 ssl http2;
     server_name meet.example.com;
     access_log off;
 
