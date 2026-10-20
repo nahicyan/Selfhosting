@@ -56,7 +56,7 @@ are fixed upstream.
 | 80, 443 /tcp | | Nginx (`0.0.0.0`, `[::]`) | Nextcloud, ACME |
 | AIO interface /tcp | `8081` | `0.0.0.0`, `[::]` | Admin interface, self-signed certificate (the official setup) |
 | Apache /tcp+udp | `11000` | `127.0.0.1` | Nginx upstream only, never opened in the firewall |
-| Talk /tcp+udp | `3478` | `0.0.0.0`, `[::]` | Talk's TURN server (only if Talk is enabled) |
+| Talk /tcp+udp | `3478` | `0.0.0.0`, `[::]` | Talk's TURN server, only if Talk is ticked in the AIO interface |
 
 Docker publishes the interface and Talk ports itself, so `ufw` rules don't
 apply to them.
@@ -70,12 +70,24 @@ apply to them.
 Prompts, in order:
 
 1. **Domain** (e.g. `cloud.example.com`)
-2. **Install directory** (default `/var/www/docker/nextcloud/<domain>`) and
-   **data directory** (default `<install-dir>/data`). Put the data directory
-   on the big disk now, because AIO does not support moving it after the
-   first start.
-3. **Ports**: AIO interface (`8081`), Apache (`11000`), Talk (`3478`, must be
-   above 1024)
+2. **Install directory** (default `/var/www/docker/nextcloud/<domain>`)
+3. **Each `compose.yaml` change**, one question per row of the
+   [table below](#changes-from-upstream-composeyaml). **Yes** applies the
+   change. **No** keeps upstream's line exactly as it is. The defaults give
+   the EOL-README.md setup, so pressing Enter throughout reproduces it: yes
+   to each change with its EOL-README.md value, and no to Talk. A yes on a
+   port or the data directory then asks for the value:
+   - AIO interface port (`8081`)
+   - Apache port (`11000`)
+   - data directory (default `<install-dir>/data`). Put it on the big disk
+     now, because AIO does not support moving it after the first start.
+
+   **Will you use Nextcloud Talk?** (default no) comes in between. Only a yes
+   asks about `TALK_PORT` (`3478`, must be above 1024). It also adds the Talk
+   port to the port checks and the firewall list.
+
+   The summary lists the accepted changes and the lines kept as upstream
+   before anything is written.
 4. **IPv6** for AIO's internal network. The default is yes when the host
    has a global IPv6 address. The prompt is skipped when the network already
    has IPv6, the kernel has IPv6 disabled, or Docker is older than 27.0.1.
@@ -88,11 +100,12 @@ Prompts, in order:
    AIO would resume that instance, and asks before continuing.
 2. Downloads `compose.yaml` from AIO's `main` branch. Upstream changes often,
    and AIO updates itself anyway. Keeps the original as `compose.yaml.orig`.
-3. Applies the changes below. Upstream's example lines are uncommented in
-   place, so their documentation comments stay. It then checks the result
-   with `docker compose config`: every environment value and the published
-   ports must be exactly as intended. If upstream changes its file layout,
-   the script stops here instead of starting a wrong setup.
+3. Applies only the changes you accepted. Upstream's example lines are
+   uncommented in place, so their documentation comments stay. It then
+   checks the result with `docker compose config`: every accepted
+   environment value and the published ports must be exactly as intended.
+   If upstream changes its file layout, the script stops here instead of
+   starting a wrong setup.
 4. Offers to open `compose.yaml` in `$EDITOR`. Values you change there carry
    over to Nginx (`APACHE_PORT`, `NEXTCLOUD_MAX_TIME`).
 5. With IPv6 chosen, creates the `nextcloud-aio` network with `--ipv6` (see
@@ -121,13 +134,25 @@ AIO_COMPOSE_URL=https://raw.githubusercontent.com/nextcloud/all-in-one/<commit>/
    domain through Nginx, so the certificate and the vhost must be live first.
 3. Choose the optional containers (Collabora, Talk, …) and the time zone,
    then **Download and start containers**. Note the initial admin password.
+   **Nextcloud Talk is ticked by default.** Untick it if you don't use it.
+   It can only be changed while the containers are stopped.
 4. In the **Backup and restore** section, set the backup location. Optionally
    enable daily backups with automatic updates.
 
 ## Changes from upstream `compose.yaml`
 
-These are the EOL-README.md changes. The ports and data directory come from
-the prompts.
+These are the EOL-README.md changes, each offered on its own at install. The
+ports and data directory come from the prompts. What declining means:
+
+- **A port removal** (`80`, `8443`): the port stays published. `80`
+  collides with the host's Nginx. `8443` collides with anything else on it,
+  such as mailcow behind a reverse proxy. The port check warns before
+  anything is written.
+- **`APACHE_PORT`**: AIO runs without a reverse proxy. Its Apache takes 443
+  itself, and the script skips the certificate and Nginx steps.
+- **`APACHE_IP_BINDING`**: Apache listens on all interfaces, so plain HTTP
+  to Nextcloud also works from outside, bypassing Nginx.
+- **Any other row**: AIO's default applies (the "Why" column names it).
 
 | Setting | Value | Why |
 |---|---|---|
@@ -136,7 +161,7 @@ the prompts.
 | `APACHE_PORT` | `11000` | Required behind a reverse proxy. It is the Nginx upstream port |
 | `APACHE_IP_BINDING` | `127.0.0.1` | Apache is reachable from this host only. Nginx is the single entry point |
 | `NEXTCLOUD_DATADIR` | `<install-dir>/data` | Files on a host path instead of a Docker volume. Still included in AIO's backups |
-| `TALK_PORT` | `3478` | TURN port, published by the Talk container |
+| `TALK_PORT` | `3478` | Asked only if you will use Talk. TURN port, published by the Talk container. Without Talk, AIO doesn't read it |
 | `NEXTCLOUD_UPLOAD_LIMIT` | `128G` | Default `1G` (non-chunked uploads, e.g. public shares) |
 | `NEXTCLOUD_MAX_TIME` | `604800` | Default `3600`s. Nginx's `proxy_read_timeout` is set 10s above this |
 | `NEXTCLOUD_MEMORY_LIMIT` | `2048M` | PHP memory per process. Default `512M` |

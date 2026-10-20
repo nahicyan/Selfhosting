@@ -8,17 +8,18 @@ set -euo pipefail
 #   https://github.com/nextcloud/all-in-one/blob/main/reverse-proxy.md
 #
 #   <install-dir>/              default /var/www/docker/nextcloud/<domain>
-#     |-- compose.yaml          upstream compose.yaml with the changes below
+#     |-- compose.yaml          upstream compose.yaml with the changes chosen below
 #     |-- compose.yaml.orig     upstream compose.yaml as downloaded
 #     `-- data/                 Nextcloud's datadir (NEXTCLOUD_DATADIR)
 #
 # compose.yaml is downloaded fresh from AIO's main branch (override with
-# AIO_COMPOSE_URL) and gets the changes from EOL-README.md:
+# AIO_COMPOSE_URL). The changes from EOL-README.md are offered one by one -
+# yes applies a change, no keeps upstream's line as it is:
 #   - ports 80 and 8443 removed: Nginx owns 80/443 and the certificate
 #   - the AIO interface published on <aio-port>:8080
 #   - environment: APACHE_PORT, APACHE_IP_BINDING=127.0.0.1, NEXTCLOUD_DATADIR,
-#     TALK_PORT, upload/time/memory limits, borg retention, startup apps,
-#     imagemagick + imagick, docker socket path
+#     TALK_PORT (asked only if Talk will be used), upload/time/memory limits,
+#     borg retention, startup apps, imagemagick + imagick, docker socket path
 # The result is checked with `docker compose config`, so a change in the
 # upstream file's layout stops the script instead of starting a wrong setup.
 #
@@ -63,7 +64,7 @@ _on_exit() {
     echo "" >&2
     echo "The install did not finish. To start over:" >&2
     echo "  (cd $INSTALL_DIR && $down); sudo rm -rf $INSTALL_DIR" >&2
-    [[ "$datadir" == "$INSTALL_DIR"/* ]] || echo "  sudo rmdir $datadir" >&2
+    [[ -z "$datadir" || "$datadir" == "$INSTALL_DIR"/* ]] || echo "  sudo rmdir $datadir" >&2
   fi
 }
 trap _on_exit EXIT
@@ -87,6 +88,17 @@ _port_in_use() {  # TCP or UDP - AIO publishes Apache and Talk on both
   [[ -n "$(ss -ltunH "sport = :$1" 2>/dev/null)" ]]
 }
 
+# _check_port_free <port> - warn and ask if something already listens on it
+_check_port_free() {
+  local answer
+  if _port_in_use "$1"; then
+    echo "WARNING: something is already listening on port $1:"
+    ss -ltunp "sport = :$1" 2>/dev/null || true
+    read -rp "Continue anyway? [y/N] " answer
+    [[ "$answer" =~ ^[Yy]$ ]] || _die "Aborted - pick a free port."
+  fi
+}
+
 # _ask_port <var-name> <label> <default>
 _ask_port() {
   local -n _port="$1"
@@ -94,12 +106,36 @@ _ask_port() {
   read -rp "$2 [$3]: " answer
   _port="${answer:-$3}"
   _valid_port "$_port" || _die "$2 must be a number between 1 and 65535."
-  if _port_in_use "$_port"; then
-    echo "WARNING: something is already listening on port $_port:"
-    ss -ltunp "sport = :$_port" 2>/dev/null || true
-    read -rp "Continue anyway? [y/N] " answer
-    [[ "$answer" =~ ^[Yy]$ ]] || _die "Aborted - pick a free port."
+  _check_port_free "$_port"
+}
+
+# _ask_change <Y|N> <question> - yes/no with the given default, true on yes
+_ask_change() {
+  local answer
+  if [[ "$1" == "Y" ]]; then
+    read -rp "$2 [Y/n] " answer
+    [[ ! "$answer" =~ ^[Nn]$ ]]
+  else
+    read -rp "$2 [y/N] " answer
+    [[ "$answer" =~ ^[Yy]$ ]]
   fi
+}
+
+# _offer_env KEY VALUE <Y|N> DESCRIPTION - offer one environment change;
+# queued in ENV_VARS on yes, upstream's line is kept on no.
+_offer_env() {
+  echo ""
+  echo "$1: $4"
+  if _ask_change "$3" "Set $1=$2?"; then
+    ENV_VARS+=("$1=$2")
+  else
+    KEPT+=("$1 not set")
+  fi
+}
+
+# _queued KEY - true if KEY is among the accepted environment changes
+_queued() {
+  [[ " ${ENV_VARS[*]%%=*} " == *" $1 "* ]]
 }
 
 # _set_env KEY VALUE - set KEY in the mastercontainer's environment: uncomment
@@ -165,7 +201,7 @@ read -rp "Enter domain name (e.g. cloud.example.com): " domain
 _valid_domain "$domain" || _die "'$domain' is not a valid domain name."
 domain="${domain,,}"
 
-# ── 2. Install and data directories ───────────────────────────────────────────
+# ── 2. Install directory ──────────────────────────────────────────────────────
 echo ""
 read -rp "Install directory [$DEFAULT_BASE/$domain]: " answer
 INSTALL_DIR="${answer:-$DEFAULT_BASE/$domain}"
@@ -175,30 +211,125 @@ if [ -e "$INSTALL_DIR" ] && [ -n "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ]; then
   _die "$INSTALL_DIR already exists and is not empty - remove it first, or choose another path."
 fi
 
-echo "Nextcloud's files live in the data directory. It cannot be moved after the"
-echo "first start (see AIO's docs on NEXTCLOUD_DATADIR), so pick a big disk now."
-read -rp "Data directory [$INSTALL_DIR/data]: " answer
-datadir="${answer:-$INSTALL_DIR/data}"
-datadir="${datadir%/}"
-_valid_path "$datadir" || _die "Data directory must be an absolute path of letters, digits and . _ - /"
-[[ "$datadir" != "$INSTALL_DIR" ]] || _die "The data directory must not be the install directory itself."
-if [ -e "$datadir" ] && [ -n "$(sudo ls -A "$datadir" 2>/dev/null)" ]; then
-  _die "$datadir already exists and is not empty - AIO needs an empty data directory."
+# ── 3. compose.yaml changes ───────────────────────────────────────────────────
+# One question per change from EOL-README.md. Yes applies it, no keeps
+# upstream's line. The defaults give the EOL-README.md setup: yes to each
+# change with its values, and no to Talk, which EOL-README.md does not use.
+CHANGES=()   # accepted changes, for the summary
+KEPT=()      # declined changes - upstream's lines stay as they are
+ENV_VARS=()  # accepted KEY=VALUE environment changes
+echo ""
+echo "──── compose.yaml changes ────"
+echo "Each change is asked separately: yes applies it, no keeps upstream's line."
+
+echo ""
+echo "Port 80:80: redirects to Nextcloud and gets the certificate for the AIO interface"
+echo "on 8443. Not needed behind Nginx, which owns port 80."
+if _ask_change Y "Remove port 80:80?"; then
+  rm_80=true; CHANGES+=("port 80:80 removed")
+else
+  rm_80=false; KEPT+=("port 80:80"); _check_port_free 80
 fi
 
-# ── 3. Ports ──────────────────────────────────────────────────────────────────
 echo ""
-echo "AIO interface: admin UI with a self-signed certificate, published on all"
-echo "interfaces (the official setup) and opened by IP address."
-_ask_port aio_port "AIO interface port" 8081
-echo "Apache (APACHE_PORT): Nextcloud itself, on 127.0.0.1 only - Nginx proxies to it."
-_ask_port apache_port "Apache port" 11000
-echo "Talk (TALK_PORT): TURN server for calls, TCP+UDP on all interfaces. AIO"
-echo "recommends a port above 1024."
-_ask_port talk_port "Talk port" 3478
-(( talk_port > 1024 )) || _die "Talk port must be above 1024."
-[[ "$(printf '%s\n' "$aio_port" "$apache_port" "$talk_port" | sort -u | wc -l)" -eq 3 ]] \
-  || _die "The three ports must be different."
+echo "Port 8443:8443: the AIO interface with the domain's certificate. Not needed"
+echo "behind Nginx - the interface stays reachable by IP on the port below."
+if _ask_change Y "Remove port 8443:8443?"; then
+  rm_8443=true; CHANGES+=("port 8443:8443 removed")
+else
+  rm_8443=false; KEPT+=("port 8443:8443"); _check_port_free 8443
+fi
+
+echo ""
+echo "Port 8080:8080: the AIO interface (self-signed certificate, opened by IP)."
+echo "EOL-README.md moved it to 8081. Only the host side can change."
+if _ask_change Y "Publish the AIO interface on another host port?"; then
+  _ask_port aio_port "AIO interface port" 8081
+  CHANGES+=("port 8080:8080 -> $aio_port:8080")
+else
+  aio_port=8080; KEPT+=("port 8080:8080"); _check_port_free 8080
+fi
+
+echo ""
+echo "APACHE_PORT: the port Nginx proxies to - required behind a reverse proxy."
+echo "Without it AIO serves Nextcloud on 443 itself, which Nginx already uses."
+if _ask_change Y "Set APACHE_PORT?"; then
+  _ask_port apache_port "Apache port" 11000
+  ENV_VARS+=("APACHE_PORT=$apache_port")
+else
+  apache_port=""; KEPT+=("APACHE_PORT not set")
+  echo "    No APACHE_PORT: the certificate and Nginx steps will be skipped."
+fi
+
+_offer_env APACHE_IP_BINDING 127.0.0.1 Y \
+  "Apache only on 127.0.0.1, so it is reachable through Nginx only (upstream: all interfaces)."
+
+echo ""
+echo "NEXTCLOUD_DATADIR: Nextcloud's files in a host directory instead of the Docker"
+echo "volume nextcloud_aio_nextcloud_datadir. It cannot be moved after the first"
+echo "start, so pick a big disk now."
+if _ask_change Y "Set NEXTCLOUD_DATADIR?"; then
+  read -rp "Data directory [$INSTALL_DIR/data]: " answer
+  datadir="${answer:-$INSTALL_DIR/data}"
+  datadir="${datadir%/}"
+  _valid_path "$datadir" || _die "Data directory must be an absolute path of letters, digits and . _ - /"
+  [[ "$datadir" != "$INSTALL_DIR" ]] || _die "The data directory must not be the install directory itself."
+  if [ -e "$datadir" ] && [ -n "$(sudo ls -A "$datadir" 2>/dev/null)" ]; then
+    _die "$datadir already exists and is not empty - AIO needs an empty data directory."
+  fi
+  ENV_VARS+=("NEXTCLOUD_DATADIR=$datadir")
+else
+  KEPT+=("NEXTCLOUD_DATADIR not set")
+fi
+
+# Talk itself is switched on or off in the AIO interface (on by default), not in
+# compose.yaml. TALK_PORT is only read when the Talk container is enabled.
+echo ""
+echo "Nextcloud Talk (chat, calls): an optional AIO container, ticked by default in"
+echo "the AIO interface. Its TURN server publishes TALK_PORT on all interfaces."
+if _ask_change N "Will you use Nextcloud Talk?"; then
+  use_talk=true
+  echo ""
+  echo "TALK_PORT: Talk's TURN port, TCP+UDP (upstream: 3478). AIO recommends a port"
+  echo "above 1024."
+  if _ask_change Y "Set TALK_PORT?"; then
+    _ask_port talk_port "Talk port" 3478
+    (( talk_port > 1024 )) || _die "Talk port must be above 1024."
+    ENV_VARS+=("TALK_PORT=$talk_port")
+  else
+    talk_port=3478; KEPT+=("TALK_PORT not set"); _check_port_free 3478
+  fi
+else
+  use_talk=false; talk_port=""; KEPT+=("TALK_PORT not set (Talk not used)")
+fi
+
+_offer_env NEXTCLOUD_UPLOAD_LIMIT 128G Y \
+  "max size of non-chunked uploads, e.g. into public shares (upstream: 1G)."
+_offer_env NEXTCLOUD_MAX_TIME 604800 Y \
+  "PHP max execution time in seconds; Nginx's timeout follows it (upstream: 3600)."
+_offer_env NEXTCLOUD_MEMORY_LIMIT 2048M Y \
+  "PHP memory limit per process (upstream: 512M)."
+_offer_env BORG_RETENTION_POLICY "--keep-within=7d --keep-weekly=4 --keep-monthly=6" Y \
+  "how long borg keeps backups - upstream's default, made explicit."
+_offer_env NEXTCLOUD_STARTUP_APPS "deck twofactor_totp tasks calendar contacts notes" Y \
+  "apps installed on the first start - upstream's default, made explicit."
+_offer_env NEXTCLOUD_ADDITIONAL_APKS imagemagick Y \
+  "extra packages in the Nextcloud container - upstream's default, made explicit."
+_offer_env NEXTCLOUD_ADDITIONAL_PHP_EXTENSIONS imagick Y \
+  "extra PHP extensions - upstream's default, made explicit."
+_offer_env AIO_DISABLE_BACKUP_SECTION false Y \
+  "keeps the backup section in the AIO interface - upstream's default, made explicit."
+_offer_env WATCHTOWER_DOCKER_SOCKET_PATH /var/run/docker.sock Y \
+  "Docker socket for mastercontainer updates - upstream's default, made explicit."
+
+CHANGES+=("${ENV_VARS[@]}")
+used_ports=("$aio_port")
+[[ "$use_talk" == "true" ]] && used_ports+=("$talk_port")
+[[ -n "$apache_port" ]] && used_ports+=("$apache_port")
+[[ "$rm_80" == "true" ]] || used_ports+=(80)
+[[ "$rm_8443" == "true" ]] || used_ports+=(8443)
+[[ "$(printf '%s\n' "${used_ports[@]}" | sort -u | wc -l)" -eq ${#used_ports[@]} ]] \
+  || _die "the ports must all be different (${used_ports[*]})."
 
 # ── 4. IPv6 ───────────────────────────────────────────────────────────────────
 # On an IPv4-only nextcloud-aio network, IPv6 clients still get in through
@@ -244,34 +375,33 @@ case "$ipv6_net" in
   *)        ipv6_info="no - IPv4 only inside Docker (Nginx still serves IPv6)" ;;
 esac
 
-# The values from EOL-README.md, plus the ports and data directory chosen above.
-ENV_VARS=(
-  "AIO_DISABLE_BACKUP_SECTION=false"
-  "APACHE_PORT=$apache_port"
-  "APACHE_IP_BINDING=127.0.0.1"
-  "BORG_RETENTION_POLICY=--keep-within=7d --keep-weekly=4 --keep-monthly=6"
-  "NEXTCLOUD_DATADIR=$datadir"
-  "NEXTCLOUD_UPLOAD_LIMIT=128G"
-  "NEXTCLOUD_MAX_TIME=604800"
-  "NEXTCLOUD_MEMORY_LIMIT=2048M"
-  "NEXTCLOUD_STARTUP_APPS=deck twofactor_totp tasks calendar contacts notes"
-  "NEXTCLOUD_ADDITIONAL_APKS=imagemagick"
-  "NEXTCLOUD_ADDITIONAL_PHP_EXTENSIONS=imagick"
-  "TALK_PORT=$talk_port"
-  "WATCHTOWER_DOCKER_SOCKET_PATH=/var/run/docker.sock"
-)
-
 # ── Summary ───────────────────────────────────────────────────────────────────
+if [[ -z "$apache_port" ]]; then
+  apache_info="443 on all interfaces - AIO without a reverse proxy (upstream)"
+elif _queued APACHE_IP_BINDING; then
+  apache_info="127.0.0.1:$apache_port  (Nginx upstream)"
+else
+  apache_info="0.0.0.0:$apache_port  (Nginx upstream, also reachable from outside)"
+fi
 echo ""
 echo "==================== SUMMARY ===================="
 echo "Domain          : $domain"
 echo "Install dir     : $INSTALL_DIR"
-echo "Data dir        : $datadir"
+echo "Data dir        : ${datadir:-Docker volume nextcloud_aio_nextcloud_datadir (upstream)}"
 echo "AIO interface   : 0.0.0.0:$aio_port  ->  mastercontainer :8080"
-echo "Apache          : 127.0.0.1:$apache_port  (Nginx upstream)"
-echo "Talk            : $talk_port/tcp+udp"
+echo "Apache          : $apache_info"
+if [[ "$use_talk" == "true" ]]; then
+  echo "Talk            : $talk_port/tcp+udp"
+else
+  echo "Talk            : not used - untick it in the AIO interface"
+fi
 echo "IPv6            : $ipv6_info"
-echo "Limits         : upload 128G, max time 604800s, PHP memory 2048M"
+echo "compose.yaml changes:"
+if [ ${#CHANGES[@]} -gt 0 ]; then printf '  + %s\n' "${CHANGES[@]}"; else echo "  (none - upstream's file as is)"; fi
+if [ ${#KEPT[@]} -gt 0 ]; then
+  echo "Kept as upstream:"
+  printf '  = %s\n' "${KEPT[@]}"
+fi
 echo "================================================="
 echo ""
 read -rp "Proceed? [Y/n] " ans_proceed
@@ -288,7 +418,9 @@ if [ "$(stat -c %u "$INSTALL_DIR")" != "$(id -u)" ]; then
 fi
 chmod 750 "$INSTALL_DIR"
 STARTED=true
-mkdir -p "$datadir" 2>/dev/null || sudo mkdir -p "$datadir"
+if [[ -n "$datadir" ]]; then
+  mkdir -p "$datadir" 2>/dev/null || sudo mkdir -p "$datadir"
+fi
 cd "$INSTALL_DIR"
 
 # ── compose.yaml ──────────────────────────────────────────────────────────────
@@ -301,20 +433,24 @@ curl -fsSL --max-time 30 --retry 3 "$AIO_COMPOSE_URL" -o "$ORIG_FILE" \
 grep -q "container_name: $MASTER" "$ORIG_FILE" \
   || _die "$AIO_COMPOSE_URL does not look like AIO's compose.yaml."
 
+how="to run behind the host's Nginx"
+[[ -n "$apache_port" ]] || how="with the changes chosen at install"
 {
   echo "# Nextcloud AIO - upstream compose.yaml from $AIO_COMPOSE_URL ($(date +%F)),"
-  echo "# changed by nextcloud-aio-docker-install.sh to run behind the host's Nginx."
+  echo "# changed by nextcloud-aio-docker-install.sh $how."
   echo "# Changes: diff -u compose.yaml.orig compose.yaml"
   cat "$ORIG_FILE"
 } > "$COMPOSE_FILE"
 
-echo "==> Applying the reverse proxy changes"
-sed -i -E \
-  -e 's|^([[:space:]]*)(- "?80:80"?)|\1# \2|' \
-  -e 's|^([[:space:]]*)(- "?8443:8443"?)|\1# \2|' \
-  -e "s|^([[:space:]]*- )\"?8080:8080\"?|\1\"$aio_port:8080\"|" \
-  -e 's|^([[:space:]]*)#[[:space:]]*environment:|\1environment:|' \
-  "$COMPOSE_FILE"
+echo "==> Applying the accepted changes (${#CHANGES[@]})"
+sed_args=()
+[[ "$rm_80" == "true" ]] && sed_args+=(-e 's|^([[:space:]]*)(- "?80:80"?)|\1# \2|')
+[[ "$rm_8443" == "true" ]] && sed_args+=(-e 's|^([[:space:]]*)(- "?8443:8443"?)|\1# \2|')
+[[ "$aio_port" != "8080" ]] && sed_args+=(-e "s|^([[:space:]]*- )\"?8080:8080\"?|\1\"$aio_port:8080\"|")
+[ ${#ENV_VARS[@]} -gt 0 ] && sed_args+=(-e 's|^([[:space:]]*)#[[:space:]]*environment:|\1environment:|')
+if [ ${#sed_args[@]} -gt 0 ]; then
+  sed -i -E "${sed_args[@]}" "$COMPOSE_FILE"
+fi
 for kv in "${ENV_VARS[@]}"; do
   _set_env "${kv%%=*}" "${kv#*=}"
 done
@@ -326,9 +462,13 @@ for kv in "${ENV_VARS[@]}"; do
   grep -qxF -e "      $k: $v" -e "      $k: \"$v\"" <<< "$cfg" \
     || _die "patching failed: $k is not '$v' in 'docker compose config'. Upstream's compose.yaml layout may have changed - compare $ORIG_FILE with EOL-README.md and edit $COMPOSE_FILE by hand."
 done
-published="$(sed -nE 's/^ +published: "?([0-9]+)"?$/\1/p' <<< "$cfg" | xargs)"
-[[ "$published" == "$aio_port" ]] \
-  || _die "patching failed: published ports are '$published', expected only $aio_port. Check the ports: section of $COMPOSE_FILE."
+want_ports=("$aio_port")
+[[ "$rm_80" == "true" ]] || want_ports+=(80)
+[[ "$rm_8443" == "true" ]] || want_ports+=(8443)
+want="$(printf '%s\n' "${want_ports[@]}" | sort -n | xargs)"
+published="$(sed -nE 's/^ +published: "?([0-9]+)"?$/\1/p' <<< "$cfg" | sort -n | xargs)"
+[[ "$published" == "$want" ]] \
+  || _die "patching failed: published ports are '$published', expected '$want'. Check the ports: section of $COMPOSE_FILE."
 echo "    OK - $COMPOSE_FILE"
 
 read -rp "Would you like to review/edit compose.yaml? [y/N] " ans_compose
@@ -341,7 +481,7 @@ fi
 apache_port="$(_cfg_env APACHE_PORT)"
 max_time="$(_cfg_env NEXTCLOUD_MAX_TIME)"; max_time="${max_time:-3600}"
 talk_port="$(_cfg_env TALK_PORT)"; talk_port="${talk_port:-3478}"
-[[ -n "$apache_port" ]] || _die "APACHE_PORT is not set in compose.yaml - AIO needs it behind a reverse proxy."
+datadir="$(_cfg_env NEXTCLOUD_DATADIR)"
 
 # ── Start the mastercontainer ─────────────────────────────────────────────────
 echo ""
@@ -398,14 +538,21 @@ if [[ -n "$aaaa" ]]; then
 elif [[ -n "$host_ipv6" ]]; then
   echo "Note: $domain has no AAAA record. Add one for $host_ipv6 to serve IPv6 clients."
 fi
-read -rp "Would you like to obtain a Let's Encrypt certificate now? [y/N] " ans_cert
+# Without APACHE_PORT, AIO gets its own certificate and serves 443 itself.
+ans_cert="n" ans_nginx="n"
+if [[ -z "$apache_port" ]]; then
+  echo "APACHE_PORT is not set: AIO serves Nextcloud on 443 and gets its own certificate,"
+  echo "so the certificate and Nginx steps are skipped. Port 443 must be free for it."
+else
+  read -rp "Would you like to obtain a Let's Encrypt certificate now? [y/N] " ans_cert
+fi
 if [[ "$ans_cert" =~ ^[Yy]$ ]]; then
   sudo certbot certonly --nginx -d "$domain"
 fi
 
 # ── Nginx reverse proxy ───────────────────────────────────────────────────────
 NGINX_AVAIL=""
-read -rp "Would you like to set up the Nginx reverse proxy? [y/N] " ans_nginx
+[[ -z "$apache_port" ]] || read -rp "Would you like to set up the Nginx reverse proxy? [y/N] " ans_nginx
 if [[ "$ans_nginx" =~ ^[Yy]$ ]]; then
   # Debian/Ubuntu layout, else the nginx.org/RHEL one.
   if [ -d /etc/nginx/sites-available ]; then
@@ -499,19 +646,26 @@ echo "    1. Open https://${public_ip:-<server-ip>}:$aio_port/ by IP address, no
 echo "       HSTS on the domain would block the interface later. Accept the"
 echo "       self-signed certificate."
 echo "    2. Note the passphrase it shows, log in, enter $domain and submit."
-echo "       AIO checks the domain through Nginx, so the certificate and the"
-echo "       vhost must be live first."
+if [[ -n "$apache_port" ]]; then
+  echo "       AIO checks the domain through Nginx, so the certificate and the"
+  echo "       vhost must be live first."
+else
+  echo "       AIO checks the domain on port 443, which must be free and open."
+fi
 echo "    3. Choose the optional containers and the time zone, then \"Download and"
 echo "       start containers\". Note the initial Nextcloud admin password."
+[[ "$use_talk" == "true" ]] || echo "       Untick Nextcloud Talk there - it is ticked by default."
 echo "    4. Set up backups in the interface's Backup section."
 echo ""
-echo "    Firewall/router, for IPv4 and IPv6: 80/tcp + 443/tcp (Nginx),"
-echo "                     $aio_port/tcp (AIO interface), $talk_port/tcp + $talk_port/udp (Talk)."
-echo "                     Docker publishes the last two itself, past ufw."
+fw="80/tcp + 443/tcp, $aio_port/tcp (AIO interface)"
+[[ "$rm_8443" == "true" ]] || fw+=", 8443/tcp"
+echo "    Firewall/router, for IPv4 and IPv6: $fw"
+[[ "$use_talk" == "true" ]] && echo "                     $talk_port/tcp + $talk_port/udp (Talk)"
+echo "                     Ports Docker publishes bypass ufw."
 echo ""
 echo "    Install dir  : $INSTALL_DIR"
 echo "    Compose file : $COMPOSE_FILE  (changes: diff -u compose.yaml.orig compose.yaml)"
-echo "    Data dir     : $datadir"
+echo "    Data dir     : ${datadir:-Docker volume nextcloud_aio_nextcloud_datadir}"
 [[ -n "$NGINX_AVAIL" ]] && echo "    Nginx vhost  : $NGINX_AVAIL  (upstream 127.0.0.1:$apache_port)"
 echo ""
 echo "    Useful commands:"
