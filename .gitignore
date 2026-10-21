@@ -18,3 +18,11 @@ OpenSource/Cal/cal.diy
 OpenSource/Harbor/.temp
 OpenSource/EspoCRM/espocrm-docker
 OpenSource/NextCloud/all-in-one
+OpenSource/Jitsi-Meet/docker-jitsi-meet
+OpenSource/Jitsi-Meet/jitsi-meet
+OpenSource/Jitsi-Meet/jicofo
+OpenSource/Jitsi-Meet/jitsi-videobridge
+OpenSource/Jitsi-Meet/opus-transcriber-proxy
+OpenSource/Jitsi-Meet/skynet
+OpenSource/Jitsi-Meet/repolist-*.png
+OpenSource/Jitsi-Meet/transcription.txt

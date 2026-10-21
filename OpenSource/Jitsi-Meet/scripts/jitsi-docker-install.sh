@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NGINX_CONF_SRC="$SCRIPT_DIR/../jitsi-nginx.conf"
+TRANSCRIPTION_SCRIPT="$SCRIPT_DIR/jitsi-docker-transcription.sh"
 
 # ── Gather inputs ─────────────────────────────────────────────────────────────
 read -rp "Enter domain name (e.g. meet.example.com): " domain
@@ -27,6 +28,12 @@ https_port="${https_port:-8444}"
 
 read -rp "Enter JVB advertise IPs — comma-separated for NAT/split-horizon (leave blank to skip): " jvb_ips
 
+read -rp "Enable AI transcription (live captions on selected meetings)? [y/N]: " ans_transcription
+if [[ "$ans_transcription" =~ ^[Yy]$ && ! -f "$TRANSCRIPTION_SCRIPT" ]]; then
+  echo "ERROR: $TRANSCRIPTION_SCRIPT not found."
+  exit 1
+fi
+
 echo
 echo "==> Domain   : $domain"
 echo "==> Company  : $company"
@@ -35,6 +42,7 @@ echo "==> Timezone : $timezone"
 echo "==> HTTP     : $http_port"
 echo "==> HTTPS    : $https_port"
 [[ -n "$jvb_ips" ]] && echo "==> JVB IPs  : $jvb_ips"
+[[ "$ans_transcription" =~ ^[Yy]$ ]] && echo "==> Captions : AI transcription (provider, key and meetings asked later)"
 echo
 
 # ── Prepare directories ───────────────────────────────────────────────────────
@@ -201,6 +209,15 @@ if [[ "$ans_iface" =~ ^[Yy]$ ]]; then
   "${EDITOR:-vim}" "$CFG_DIR/web/custom-interface_config.js"
 fi
 
+# ── AI transcription ──────────────────────────────────────────────────────────
+# Done by jitsi-docker-transcription.sh — the same script that later changes the
+# meetings/provider or disables it. It appends to custom-config.js (so it runs
+# after that file is written) and adds the opus-transcriber service to
+# docker-compose.yml, which the pull and up below then fetch and start.
+if [[ "$ans_transcription" =~ ^[Yy]$ ]]; then
+  bash "$TRANSCRIPTION_SCRIPT" --install-dir "$INSTALL_DIR" --no-restart
+fi
+
 # ── Pull Docker images ────────────────────────────────────────────────────────
 echo "==> Pulling Docker images (this may take several minutes)..."
 docker compose pull
@@ -263,3 +280,6 @@ echo "    Add user    : docker compose exec prosody prosodyctl --config /config/
 echo "    Remove user : docker compose exec prosody prosodyctl --config /config/prosody.cfg.lua unregister USERNAME meet.jitsi"
 echo ""
 echo "    Run jitsi-docker-mod.sh to customize branding, colors, and text."
+if [[ "$ans_transcription" =~ ^[Yy]$ ]]; then
+  echo "    Run jitsi-docker-transcription.sh to change AI transcription meetings/provider, or to disable it."
+fi
