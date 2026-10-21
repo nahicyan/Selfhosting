@@ -677,6 +677,8 @@ if not all_rooms then
     end
 end
 EOF
+# Prosody runs as uid 1000 (stable-11146+); readable whatever the umask.
+chmod 644 "$PROSODY_MODULE"
 echo "    Written (rooms: $rooms, auto-start: $auto_start)."
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -713,7 +715,15 @@ fi
 jicofo_body+="
 }"
 edit_block upsert "$JICOFO_CUSTOM" "#" "$jicofo_body"
-[[ "$provider" == "openai_custom" ]] && chmod 600 "$JICOFO_CUSTOM"
+# Jicofo copies /config as uid 1000 (rootless images, stable-11146+), so the file
+# must be readable by that uid. With the custom endpoint's key in it, it goes to
+# uid 1000 alone instead of being world-readable.
+if [[ "$provider" == "openai_custom" ]]; then
+  chown 1000:1000 "$JICOFO_CUSTOM" 2>/dev/null || sudo chown 1000:1000 "$JICOFO_CUSTOM"
+  chmod 600 "$JICOFO_CUSTOM" 2>/dev/null || sudo chmod 600 "$JICOFO_CUSTOM"
+else
+  chmod 644 "$JICOFO_CUSTOM" 2>/dev/null || sudo chmod 644 "$JICOFO_CUSTOM"
+fi
 echo "    Written."
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -1,6 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
+# The containers run as uid 1000 (stable-11146+) and must be able to read the
+# config files and folders created here, whatever the shell's umask is.
+umask 022
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NGINX_CONF_SRC="$SCRIPT_DIR/../jitsi-nginx.conf"
 TRANSCRIPTION_SCRIPT="$SCRIPT_DIR/jitsi-docker-transcription.sh"
@@ -136,7 +140,13 @@ bash ./gen-passwords.sh
 
 # ── Create config directories ─────────────────────────────────────────────────
 echo "==> Creating config directories at $CFG_DIR..."
-mkdir -p "$CFG_DIR"/{web/images,web/css,web/lang,transcripts,prosody/config,prosody/prosody-plugins-custom,jicofo,jvb,jigasi,jibri}
+mkdir -p "$CFG_DIR"/{web/images,web/css,web/lang,prosody/config,prosody/prosody-plugins-custom,jicofo,jvb,jigasi,jibri}
+
+# Since stable-11146 the containers run as uid 1000 instead of root and write to
+# these volumes. Docker would auto-create them as root:root, and web, prosody and
+# jibri then refuse to start ("... is not writable by the container user (uid 1000)").
+mkdir -p "$CFG_DIR"/storage/{jibri,prosody,transcripts,web} "$CFG_DIR"/tmp/{web-crontabs,web-load-test}
+sudo chown -R 1000:1000 "$CFG_DIR"/storage "$CFG_DIR"/tmp
 
 # ── Write Jibri finalize stub ─────────────────────────────────────────────────
 # Jibri's JAR defaults finalize-script to "/path/to/finalize"; without a real
