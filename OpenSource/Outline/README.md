@@ -15,7 +15,9 @@ Outline/
 ├── outline/                 # Vendored upstream source (reference only — not run directly)
 ├── temp/                    # Plain-text copies of the official self-hosting docs used to build this
 └── scripts/
-    └── outline-docker-install.sh   # Writes .env, starts the stack, wires up Nginx/certbot
+    ├── outline-docker-install.sh   # Writes .env, starts the stack, wires up Nginx/certbot
+    ├── outline-docker-backup.sh    # Snapshot: database, attachments, .env (cron-capable)
+    └── outline-docker-restore.sh   # Restores a snapshot (full recovery, or data only)
 ```
 
 Each installed instance lives at `/var/www/docker/outline/<domain>/` by
@@ -47,7 +49,12 @@ UID/GID to reconcile — unlike code-server or Keycloak's themes.
 ./scripts/outline-docker-install.sh
 ```
 
-You'll be asked for, in order:
+First you're asked to type `yes` to confirm that a Keycloak instance is
+running, the DNS record for the Outline domain exists, and its Let's Encrypt
+certificate is in `/etc/letsencrypt/live/<domain>/`. Anything else aborts
+before a single question is asked.
+
+Then you'll be asked for, in order:
 
 1. **Domain** — e.g. `outline.example.com`
 2. **Install directory** — defaults to `/var/www/docker/outline/<domain>`,
@@ -279,19 +286,82 @@ Database migrations run automatically on container start
 
 ## Backup
 
-There's no dedicated backup script for Outline yet. Everything stateful is
-in two named volumes plus `.env`:
-
 ```bash
-docker run --rm -v outline-<domain-with-dashes>_database-data:/data -v "$PWD":/backup alpine \
-  tar czf /backup/outline-postgres-$(date +%F).tar.gz -C /data .
-docker run --rm -v outline-<domain-with-dashes>_storage-data:/data -v "$PWD":/backup alpine \
-  tar czf /backup/outline-storage-$(date +%F).tar.gz -C /data .
-cp /var/www/docker/outline/<domain>/.env outline-env-$(date +%F).backup
+./scripts/outline-docker-backup.sh
 ```
 
-(A proper `pg_dump`-based backup, like the other apps in this repo have,
-would be a cleaner follow-up than tarring the raw volume.)
+Like the other apps here it asks where to save (default `/home/backup`) and
+which instance, then writes one snapshot:
+
+```
+/home/backup/outline/<domain>/<date-time>/
+├── postgres/outline.sql.gz          # pg_dump of the database, verified complete
+├── attachments/attachments.tar.gz   # the storage-data volume
+├── config/.env                      # SECRET_KEY and all other settings
+├── config/docker-compose.yml        # reference copy (+ docker-compose.override.yml if present)
+└── manifest.txt                     # Outline version, image, last migration
+```
+
+That is what Outline's own backup guidance names: the database, the file
+storage and the environment. `pg_dump` reads a consistent snapshot, so
+Outline keeps running. The attachments are read afterwards through a
+read-only container, so a file uploaded in between is at worst an unused
+extra in the archive. The script checks free space first, verifies the dump
+and the archive, removes a snapshot that failed part-way, and keeps the last
+7 per domain.
+
+**Keep `config/.env` with the dump.** Outline encrypts data in the database
+with `SECRET_KEY`; without it that data is unreadable. The snapshot is secret
+material (mode `700`/`600`). Copy `/home/backup/outline/` off the server.
+
+Scheduled: set both variables and every prompt is skipped
+(`OUTLINE_BACKUP_KEEP` changes how many snapshots are kept, `0` = all):
+
+```cron
+30 2 * * * OUTLINE_BACKUP_ROOT=/home/backup OUTLINE_INSTANCE_DIR=/var/www/docker/outline/<domain> /path/to/Outline/scripts/outline-docker-backup.sh >> $HOME/outline-backup.log 2>&1
+```
+
+Run it as the user that owns the instance (it reads `.env`) and is in the
+`docker` group. A lock file in the instance directory stops a backup and a
+restore from overlapping. Keycloak is not included; back it up with
+`../Keycloak/scripts/keycloak-docker-backup.sh`.
+
+## Restore
+
+```bash
+./scripts/outline-docker-restore.sh
+```
+
+Pick a snapshot, the instance to restore into, and what to restore:
+
+| Option | Restores | For |
+|---|---|---|
+| **1) Full recovery** | `.env` + database + attachments | A new server, or rolling the whole instance back |
+| **2) Data only** | database + attachments, keeps the instance's `.env` | Undoing a bad upgrade or a deletion on the same install |
+
+The database and attachments always go together: attachment rows point at
+stored files. Before anything changes, the script verifies the snapshot and
+refuses one from a newer Outline than the target runs (migrations only run
+forward; an older snapshot is migrated on start). Data only is refused when
+the instance's `SECRET_KEY` differs from the snapshot's.
+
+It then takes a safety snapshot of the target (listed as `pre-restore`;
+restore it to undo), stops Outline, loads the database in one transaction,
+replaces the attachments, and waits for `/_health`. You confirm by typing
+`restore`.
+
+**New server:** if Keycloak was lost too, restore it first, so the
+`OIDC_CLIENT_SECRET` in the snapshot's `.env` matches Keycloak's client
+again. Run `outline-docker-install.sh` with the **same domain**, then choose
+**Full recovery**. The installer generated new passwords, and Postgres only
+reads its password when its volume is created, so Full recovery re-creates
+the database volume for the snapshot's password to apply. It refuses a
+snapshot from another domain, and warns when the restored OIDC secret differs
+from the one the instance had.
+
+`docker-compose.yml` and `docker-compose.override.yml` are not restored: the
+first is this repo's file, the second (the NAT-hairpin mapping) is specific to
+the host it was written on.
 
 ## Useful commands
 

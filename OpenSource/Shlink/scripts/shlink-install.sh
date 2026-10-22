@@ -39,6 +39,19 @@ _status() {
 echo ""
 echo "=====> Shlink Install"
 echo "========================================"
+
+# Confirmed by the person running this: each Nginx site expects its certificate
+# in /etc/letsencrypt/live/<domain>/, and certbot only issues it once the DNS
+# record points here.
+echo "Before you continue, make sure that, for BOTH the backend (short-URL) and"
+echo "the frontend (Web UI) domain:"
+echo "  1. A DNS record points at this server."
+echo "  2. A Let's Encrypt certificate exists in /etc/letsencrypt/live/<domain>/."
+echo ""
+read -rp "Type 'yes' to confirm both and continue: " ans_prereq
+[[ "${ans_prereq,,}" == "yes" ]] || { echo "ERROR: Aborted - set these up first, then run this script again."; exit 1; }
+echo ""
+
 echo "  1) New instance"
 echo "  2) Restore from backup"
 echo ""

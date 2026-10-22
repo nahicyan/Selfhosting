@@ -195,6 +195,19 @@ if [ ${#OLD_VOLUMES[@]} -gt 0 ]; then
   [[ " ${OLD_VOLUMES[*]} " == *" $MASTER_VOLUME "* ]] && VOLUME_EXISTED=true
 fi
 
+# ── Prerequisites ────────────────────────────────────────────────────────────
+# Confirmed by the person running this: the Nginx site expects the certificate
+# in /etc/letsencrypt/live/<domain>/, and certbot only issues it once the DNS
+# record points here.
+echo "Before you continue, make sure that:"
+echo "  1. A DNS record for the Nextcloud domain points at this server."
+echo "  2. A Let's Encrypt certificate for the Nextcloud domain exists in"
+echo "     /etc/letsencrypt/live/<domain>/."
+echo ""
+read -rp "Type 'yes' to confirm both and continue: " ans_prereq
+[[ "${ans_prereq,,}" == "yes" ]] || _die "Aborted - set these up first, then run this script again."
+echo ""
+
 # ── 1. Domain ─────────────────────────────────────────────────────────────────
 read -rp "Enter domain name (e.g. cloud.example.com): " domain
 [[ -n "$domain" ]] || _die "Domain cannot be empty."

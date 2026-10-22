@@ -129,6 +129,19 @@ echo "========================================"
 echo "Requirements: 2GB RAM (4GB recommended), 12GB disk, Docker Engine 26+."
 echo ""
 
+# ── Prerequisites ────────────────────────────────────────────────────────────
+# Confirmed by the person running this: the Nginx site expects the certificate
+# in /etc/letsencrypt/live/<domain>/, and certbot only issues it once the DNS
+# record points here.
+echo "Before you continue, make sure that:"
+echo "  1. A DNS record for the Bitwarden domain points at this server."
+echo "  2. A Let's Encrypt certificate for the Bitwarden domain exists in"
+echo "     /etc/letsencrypt/live/<domain>/."
+echo ""
+read -rp "Type 'yes' to confirm both and continue: " ans_prereq
+[[ "${ans_prereq,,}" == "yes" ]] || _die "Aborted - set these up first, then run this script again."
+echo ""
+
 # ── 1. Domain ─────────────────────────────────────────────────────────────────
 read -rp "Enter domain name (e.g. vault.example.com): " domain
 [[ -n "$domain" ]] || _die "Domain cannot be empty."

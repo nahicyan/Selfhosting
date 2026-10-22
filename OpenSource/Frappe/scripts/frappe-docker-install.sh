@@ -44,6 +44,19 @@ NGINX_CONF_SRC="$SCRIPT_DIR/../frappe-lms-nginx.conf"
 IMAGE_NAME="frappe-lms-custom"
 IMAGE_TAG="stable"
 
+# ── Prerequisites ────────────────────────────────────────────────────────────
+# Confirmed by the person running this: the Nginx site expects the certificate
+# in /etc/letsencrypt/live/<domain>/, and certbot only issues it once the DNS
+# record points here.
+echo "Before you continue, make sure that:"
+echo "  1. A DNS record for the Frappe LMS domain points at this server."
+echo "  2. A Let's Encrypt certificate for the Frappe LMS domain exists in"
+echo "     /etc/letsencrypt/live/<domain>/."
+echo ""
+read -rp "Type 'yes' to confirm both and continue: " ans_prereq
+[[ "${ans_prereq,,}" == "yes" ]] || { echo "Aborted - set these up first, then run this script again."; exit 1; }
+echo ""
+
 # ── Gather inputs ─────────────────────────────────────────────────────────────
 read -rp "Enter domain name (e.g. lms.example.com): " domain
 [[ -z "$domain" ]] && { echo "Domain cannot be empty."; exit 1; }

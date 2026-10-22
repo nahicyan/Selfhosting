@@ -171,6 +171,20 @@ echo "========================================"
 echo "Compose source: $COMPOSE_SRC"
 echo ""
 
+# ── Prerequisites ────────────────────────────────────────────────────────────
+# Confirmed by the person running this: the Nginx site expects the certificate
+# in /etc/letsencrypt/live/<domain>/, and Keycloak sign-in fails at the first
+# login unless Keycloak answers on its public URL.
+echo "Before you continue, make sure that:"
+echo "  1. A Keycloak instance is running and reachable at its public https URL."
+echo "  2. A DNS record for the Outline domain points at this server."
+echo "  3. A Let's Encrypt certificate for the Outline domain exists in"
+echo "     /etc/letsencrypt/live/<domain>/."
+echo ""
+read -rp "Type 'yes' to confirm all three and continue: " ans_prereq
+[[ "${ans_prereq,,}" == "yes" ]] || _die "Aborted - set these up first, then run this script again."
+echo ""
+
 # ── 1. Domain ─────────────────────────────────────────────────────────────────
 read -rp "Enter domain name (e.g. outline.example.com): " domain
 [[ -n "$domain" ]] || _die "Domain cannot be empty."

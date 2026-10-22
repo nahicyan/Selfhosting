@@ -9,6 +9,19 @@ NGINX_CONF_SRC="$SCRIPT_DIR/../matrix-synapse-nginx.conf"
 #   matrix-element-call-install.sh
 # Run this one first — it generates matrix_secret, which MAS needs.
 
+# ── Prerequisites ────────────────────────────────────────────────────────────
+# Confirmed by the person running this, before anything is installed: the
+# Nginx site expects the certificate in /etc/letsencrypt/live/<domain>/, and
+# certbot only issues it once the DNS record points here.
+echo "Before you continue, make sure that:"
+echo "  1. A DNS record for the Matrix homeserver domain points at this server."
+echo "  2. A Let's Encrypt certificate for the Matrix homeserver domain exists in"
+echo "     /etc/letsencrypt/live/<domain>/."
+echo ""
+read -rp "Type 'yes' to confirm both and continue: " ans_prereq
+[[ "${ans_prereq,,}" == "yes" ]] || { echo "Aborted - set these up first, then run this script again."; exit 1; }
+echo ""
+
 # ── Add Matrix.org repository and install Synapse + PostgreSQL ─────────────────
 echo "==> Adding Matrix.org apt repository..."
 sudo apt install -y lsb-release wget apt-transport-https

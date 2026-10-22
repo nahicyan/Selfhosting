@@ -8,6 +8,19 @@ NGINX_CONF_SRC="$SCRIPT_DIR/../matrix-element-call-nginx.conf"
 # of Synapse/MAS — no shared secrets — but Synapse's well-known client JSON
 # must point at this domain for clients to find it (see matrix-synapse-install.sh).
 
+# ── Prerequisites ────────────────────────────────────────────────────────────
+# Confirmed by the person running this: the Nginx site expects the certificate
+# in /etc/letsencrypt/live/<domain>/, and certbot only issues it once the DNS
+# record points here.
+echo "Before you continue, make sure that:"
+echo "  1. A DNS record for the RTC / Element Call domain points at this server."
+echo "  2. A Let's Encrypt certificate for the RTC / Element Call domain exists in"
+echo "     /etc/letsencrypt/live/<domain>/."
+echo ""
+read -rp "Type 'yes' to confirm both and continue: " ans_prereq
+[[ "${ans_prereq,,}" == "yes" ]] || { echo "Aborted - set these up first, then run this script again."; exit 1; }
+echo ""
+
 # ── Gather inputs ─────────────────────────────────────────────────────────────
 read -rp "Enter RTC / Element Call backend domain (e.g. rtc.example.com): " rtcdomain
 [[ -z "$rtcdomain" ]] && { echo "RTC domain cannot be empty."; exit 1; }
