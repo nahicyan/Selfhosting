@@ -50,7 +50,14 @@ NGINX_CONF_SRC="$SCRIPT_DIR/../plane-nginx.conf"
 GH_REPO="makeplane/plane"
 
 # ── Dependency check ──────────────────────────────────────────────────────────
-for cmd in curl docker openssl sed; do
+# Docker first: every step below runs through it.
+command -v docker >/dev/null 2>&1 \
+  || { echo "ERROR: Docker is not installed. Install Docker Engine (https://docs.docker.com/engine/install/), then run this script again."; exit 1; }
+docker compose version >/dev/null 2>&1 \
+  || { echo "ERROR: the Docker Compose plugin ('docker compose') is not installed. Install it (https://docs.docker.com/compose/install/linux/), then run this script again."; exit 1; }
+docker info >/dev/null 2>&1 \
+  || { echo "ERROR: cannot talk to Docker - is it running, and is $(id -un) in the docker group?"; exit 1; }
+for cmd in curl openssl sed; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "ERROR: '$cmd' is required but not installed."; exit 1; }
 done
 

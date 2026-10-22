@@ -33,6 +33,15 @@
 
 set -euo pipefail
 
+# ── Docker ────────────────────────────────────────────────────────────────────
+# Checked before anything else: every step below runs through Docker.
+command -v docker >/dev/null 2>&1 \
+  || { echo "ERROR: Docker is not installed. Install Docker Engine (https://docs.docker.com/engine/install/), then run this script again."; exit 1; }
+docker compose version >/dev/null 2>&1 \
+  || { echo "ERROR: the Docker Compose plugin ('docker compose') is not installed. Install it (https://docs.docker.com/compose/install/linux/), then run this script again."; exit 1; }
+docker info >/dev/null 2>&1 \
+  || { echo "ERROR: cannot talk to Docker - is it running, and is $(id -un) in the docker group?"; exit 1; }
+
 echo ""
 echo "════════════════════════════════════════════════"
 echo " Jitsi Meet — Modification Script"

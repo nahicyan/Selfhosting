@@ -161,11 +161,16 @@ _yml_edit() {  # _yml_edit <exact line> <replacement line>
 }
 
 # ── Dependency check ──────────────────────────────────────────────────────────
-for cmd in docker curl openssl tar ss sed awk sort mktemp; do
+# Docker first: every step below runs through it.
+command -v docker >/dev/null 2>&1 \
+  || _die "Docker is not installed. Install Docker Engine (https://docs.docker.com/engine/install/), then run this script again."
+docker compose version >/dev/null 2>&1 \
+  || _die "the Docker Compose plugin ('docker compose') is not installed. Install it (https://docs.docker.com/compose/install/linux/), then run this script again."
+docker info >/dev/null 2>&1 \
+  || _die "cannot talk to Docker - is it running, and is $(id -un) in the docker group?"
+for cmd in curl openssl tar ss sed awk sort mktemp; do
   command -v "$cmd" >/dev/null 2>&1 || _die "'$cmd' is required but not installed."
 done
-docker compose version >/dev/null 2>&1 || _die "the Docker Compose plugin ('docker compose') is required."
-docker info >/dev/null 2>&1 || _die "cannot talk to Docker - is it running, and is $(id -un) in the docker group?"
 
 echo ""
 echo "=====> Harbor Install (online installer)"

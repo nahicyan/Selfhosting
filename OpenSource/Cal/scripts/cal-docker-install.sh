@@ -297,11 +297,16 @@ _build_image() {
 }
 
 # ── Dependency check ──────────────────────────────────────────────────────────
-for cmd in git docker curl openssl od base64 awk sed mktemp; do
+# Docker first: every step below runs through it.
+command -v docker >/dev/null 2>&1 \
+  || _die "Docker is not installed. Install Docker Engine (https://docs.docker.com/engine/install/), then run this script again."
+docker compose version >/dev/null 2>&1 \
+  || _die "the Docker Compose plugin ('docker compose') is not installed. Install it (https://docs.docker.com/compose/install/linux/), then run this script again."
+docker info >/dev/null 2>&1 \
+  || _die "cannot reach the Docker daemon - is it running, and is this user allowed to use it?"
+for cmd in git curl openssl od base64 awk sed mktemp; do
   command -v "$cmd" >/dev/null 2>&1 || _die "'$cmd' is required but not installed."
 done
-docker compose version >/dev/null 2>&1 || _die "the Docker Compose plugin ('docker compose') is required."
-docker info >/dev/null 2>&1 || _die "cannot reach the Docker daemon - is it running, and is this user allowed to use it?"
 [ -f "$NGINX_CONF_SRC" ] || _die "cal-nginx.conf not found at $NGINX_CONF_SRC"
 if [[ -n "$CAL_IMAGE" ]]; then
   [[ "$CAL_IMAGE" =~ ^[A-Za-z0-9._/:@-]+$ ]] || _die "CAL_IMAGE '$CAL_IMAGE' is not a valid image reference."

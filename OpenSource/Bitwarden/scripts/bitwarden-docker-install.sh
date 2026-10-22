@@ -112,11 +112,16 @@ _smtp_probe() { timeout 8 bash -c "exec 3<>/dev/tcp/$1/$2" 2>/dev/null; }
 
 # ── Dependency check ──────────────────────────────────────────────────────────
 [ "$(id -u)" -ne 0 ] || _die "Do not install Bitwarden as root (Bitwarden's docs: it breaks the installation). Run as a normal user in the docker group."
-for cmd in docker curl awk sed grep sudo; do
+# Docker first: every step below runs through it.
+command -v docker >/dev/null 2>&1 \
+  || _die "Docker is not installed. Install Docker Engine (https://docs.docker.com/engine/install/), then run this script again."
+docker compose version >/dev/null 2>&1 \
+  || _die "the Docker Compose plugin ('docker compose') is not installed. Install it (https://docs.docker.com/compose/install/linux/), then run this script again."
+docker info >/dev/null 2>&1 \
+  || _die "cannot talk to Docker - is your user in the 'docker' group (log out/in after 'usermod -aG docker \$USER')?"
+for cmd in curl awk sed grep sudo; do
   command -v "$cmd" >/dev/null 2>&1 || _die "'$cmd' is required but not installed."
 done
-docker compose version >/dev/null 2>&1 || _die "the Docker Compose plugin ('docker compose') is required."
-docker info >/dev/null 2>&1 || _die "cannot talk to Docker - is your user in the 'docker' group (log out/in after 'usermod -aG docker \$USER')?"
 [ -f "$NGINX_CONF_SRC" ] || _die "bitwarden-nginx.conf not found at $NGINX_CONF_SRC"
 [ -f "$MANAGE_SRC" ]     || _die "bitwarden-docker-manage.sh not found at $MANAGE_SRC"
 if docker ps -a --format '{{.Names}}' | grep -q '^bitwarden-'; then

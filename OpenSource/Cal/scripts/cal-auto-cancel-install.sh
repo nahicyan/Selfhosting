@@ -69,11 +69,16 @@ _valid_domain() {
 }
 
 # ── Dependency check ──────────────────────────────────────────────────────────
-for cmd in docker openssl install grep cut; do
+# Docker first: every step below runs through it.
+command -v docker >/dev/null 2>&1 \
+  || _die "Docker is not installed. Install Docker Engine (https://docs.docker.com/engine/install/), then run this script again."
+docker compose version >/dev/null 2>&1 \
+  || _die "the Docker Compose plugin ('docker compose') is not installed. Install it (https://docs.docker.com/compose/install/linux/), then run this script again."
+docker info >/dev/null 2>&1 \
+  || _die "cannot reach the Docker daemon - is it running, and is this user allowed to use it?"
+for cmd in openssl install grep cut; do
   command -v "$cmd" >/dev/null 2>&1 || _die "'$cmd' is required but not installed."
 done
-docker compose version >/dev/null 2>&1 || _die "the Docker Compose plugin ('docker compose') is required."
-docker info >/dev/null 2>&1 || _die "cannot reach the Docker daemon - is it running, and is this user allowed to use it?"
 [ -f "$RECEIVER_SRC" ] || _die "cal-auto-cancel.py not found at $RECEIVER_SRC"
 
 echo ""
