@@ -519,11 +519,16 @@ published="${published%%$'\n'*}"
 aio_port="${published##*:}"
 [[ -n "$aio_port" ]] || _die "port 8080 of $MASTER is not published - check the ports: section of compose.yaml."
 
+# The interface answers 403 to requests without a browser's Sec-Fetch-* headers
+# (AIO PR #8786), so the probe sends them. Any 2xx-4xx answer is the interface
+# itself; Caddy gives 5xx until PHP is ready.
 echo -n "==> Waiting for the AIO interface"
-IFACE_UP=false
+IFACE_UP=false restarts=0 code=""
 for _ in $(seq 1 36); do   # 3 minutes
-  code="$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "https://127.0.0.1:$aio_port/" 2>/dev/null || true)"
-  if [[ "$code" =~ ^[23][0-9][0-9]$ ]]; then IFACE_UP=true; break; fi
+  code="$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 \
+            -H 'Sec-Fetch-Site: none' -H 'Sec-Fetch-Mode: navigate' -H 'Sec-Fetch-Dest: document' \
+            "https://127.0.0.1:$aio_port/" 2>/dev/null || true)"
+  if [[ "$code" =~ ^[234][0-9][0-9]$ ]]; then IFACE_UP=true; break; fi
   # AIO's start script exits on invalid settings, and restart: always loops it.
   restarts="$(docker inspect -f '{{.RestartCount}}' "$MASTER" 2>/dev/null || echo 0)"
   [[ "$restarts" -lt 2 ]] || break
@@ -531,14 +536,23 @@ for _ in $(seq 1 36); do   # 3 minutes
   sleep 5
 done
 echo ""
-if [[ "$IFACE_UP" != "true" ]]; then
+STARTED=false   # running: a failure from here on leaves an instance to fix, not to delete
+if [[ "$IFACE_UP" == "true" ]]; then
+  echo "==> AIO interface is up on port $aio_port."
+else
+  # The steps below don't need the interface, so carry on and say so.
   echo "---- last 40 lines of the $MASTER log ----"
   docker logs --tail 40 "$MASTER" 2>&1 || true
   echo "-------------------------------------------------------------"
-  _die "the AIO interface did not come up on https://127.0.0.1:$aio_port/"
+  if [[ "$restarts" -ge 2 ]]; then
+    IFACE_WARN="$MASTER is restarting in a loop: AIO rejected a setting (see its log). Fix it in compose.yaml, then from $INSTALL_DIR: docker compose up -d"
+  else
+    [[ "$code" =~ ^[0-9]{3}$ && "$code" != 000 ]] && last="HTTP $code" || last="no connection"
+    IFACE_WARN="the AIO interface did not answer on https://127.0.0.1:$aio_port/ within 3 minutes ($last). Open it in a browser; if it doesn't load, check: docker logs $MASTER"
+  fi
+  echo "WARNING: $IFACE_WARN"
+  echo "         Continuing with the remaining steps."
 fi
-STARTED=false   # running: a failure from here on leaves a working instance to fix, not to delete
-echo "==> AIO interface is up on port $aio_port."
 
 # ── Let's Encrypt ─────────────────────────────────────────────────────────────
 # Let's Encrypt and most clients try IPv6 first, so an AAAA record that leads
@@ -657,7 +671,12 @@ public_ip="$(curl -4 -fsS --max-time 5 https://api.ipify.org 2>/dev/null || true
 [[ "$public_ip" != *:* ]] || public_ip="[$public_ip]"   # IPv6-only host
 
 echo ""
-echo "==> Nextcloud AIO mastercontainer is running."
+if [[ "$IFACE_UP" == "true" ]]; then
+  echo "==> Nextcloud AIO mastercontainer is running."
+else
+  echo "==> Nextcloud AIO mastercontainer was started, but its interface was not confirmed."
+  echo "WARNING: $IFACE_WARN"
+fi
 echo ""
 echo "    Finish the setup in the AIO interface:"
 echo "    1. Open https://${public_ip:-<server-ip>}:$aio_port/ by IP address, not by domain:"

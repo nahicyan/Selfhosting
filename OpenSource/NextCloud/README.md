@@ -110,9 +110,12 @@ Prompts, in order:
    over to Nginx (`APACHE_PORT`, `NEXTCLOUD_MAX_TIME`).
 5. With IPv6 chosen, creates the `nextcloud-aio` network with `--ipv6` (see
    [IPv6](#ipv6)).
-6. Pulls and starts the mastercontainer, then waits until the interface
-   answers. If the mastercontainer crash-loops (AIO rejects invalid settings
-   at startup), the script stops and prints its log.
+6. Pulls and starts the mastercontainer, then waits up to 3 minutes for the
+   interface to answer. The probe sends a browser's `Sec-Fetch-*` headers,
+   because the interface answers 403 to requests without them. If it gets no
+   answer, or the mastercontainer crash-loops (AIO rejects invalid settings at
+   startup), it prints the log and a warning. It then continues with the
+   remaining steps and repeats the warning at the end.
 7. Warns if the domain's AAAA record does not point to this host, or notes
    that it is missing. Then it optionally gets a Let's Encrypt certificate
    (`certbot certonly --nginx`) and installs the Nginx vhost (see
