@@ -72,7 +72,6 @@ You'll be prompted for:
 - **Port** — host port on `127.0.0.1` (default `8095`). The same value goes into
   `harbor.yml` and the Nginx vhost. If something already listens on it, the
   script shows what and asks.
-- **Version** — defaults to the latest GitHub release; `v2.15.0` or newer
 - **Trivy** — the vulnerability scanner, `install.sh --with-trivy` (default yes)
 - **Admin password** — blank generates one. Harbor's policy applies: 8–128
   characters, one uppercase, one lowercase, one digit.
@@ -86,7 +85,9 @@ the database password, and those characters need no escaping in any of them.
 
 1. Refuses if Harbor's container names, `127.0.0.1:1514`, or another instance
    directory already exist, or if the instance directory isn't empty
-2. Downloads `harbor-online-installer-<version>.tgz` from the GitHub release and,
+2. Downloads `harbor-online-installer-<version>.tgz` for the latest stable
+   release (the highest version number, not GitHub's "Latest" badge, which can
+   sit on a patch for an older branch) and,
    with cosign, verifies it exactly as
    [Harbor's signature guide](https://github.com/goharbor/harbor/blob/main/docs/signature-verification.md)
    documents (`--new-bundle-format` is added for cosign 2.4.x, which needs it)
@@ -256,7 +257,7 @@ What happens:
 **Disaster recovery onto a new host:**
 
 ```bash
-./scripts/harbor-docker-install.sh     # same domain, snapshot's version or newer
+./scripts/harbor-docker-install.sh     # same domain; installs the latest release
 ./scripts/harbor-docker-restore.sh     # option 1 - full restore
 ```
 

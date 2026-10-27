@@ -62,7 +62,7 @@ NGINX_CONF_SRC="$SCRIPT_DIR/../harbor-nginx.conf"
 HARBOR_BASE="/var/www/docker/harbor"
 DEFAULT_PORT="8095"
 MIN_VERSION="v2.15.0"
-RELEASES_API="https://api.github.com/repos/goharbor/harbor/releases/latest"
+RELEASES_API="https://api.github.com/repos/goharbor/harbor/releases?per_page=100"
 RELEASES_DL="https://github.com/goharbor/harbor/releases/download"
 
 # Every container name Harbor's compose file can create (trivy-adapter only
@@ -245,19 +245,21 @@ if _port_in_use "$port"; then
 fi
 
 # ── Version ───────────────────────────────────────────────────────────────────
+# Always the newest stable release by version number. Not GitHub's
+# releases/latest: that is just the most recently published release, and Harbor
+# keeps shipping patches for older branches (v2.14.6 came out after v2.15.4),
+# so it often names an older line.
 echo ""
-latest="$(curl -fsSL --max-time 15 "$RELEASES_API" 2>/dev/null \
-  | sed -n 's/^[[:space:]]*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1 || true)"
-if [[ -n "$latest" ]]; then
-  read -rp "Harbor version [$latest]: " version
-  version="${version:-$latest}"
-else
-  echo "Could not look up the latest release on GitHub."
-  read -rp "Harbor version (e.g. v2.15.4): " version
-fi
-[[ -n "$version" ]] || _die "Version cannot be empty."
-[[ "$version" == v* ]] || version="v$version"
-[[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc[0-9]+)?$ ]] || _die "'$version' is not a Harbor release tag (vX.Y.Z)."
+echo "==> Looking up the latest Harbor release"
+version="$(curl -fsSL --max-time 15 "$RELEASES_API" 2>/dev/null \
+  | awk -F'"' '
+      $2 == "tag_name"   { tag = $4 }
+      $2 == "draft"      { draft = ($3 ~ /true/) }
+      $2 == "prerelease" { if (tag != "" && !draft && $3 ~ /false/) print tag; tag = "" }' \
+  | grep -xE 'v[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -n1 || true)"
+[[ -n "$version" ]] || \
+  _die "could not look up the latest Harbor release on GitHub ($RELEASES_API) - check this host's internet access and try again."
+echo "    Latest release: $version"
 _version_ge "$version" "$MIN_VERSION" || \
   _die "$version is older than $MIN_VERSION. This script is written against the $MIN_VERSION+ harbor.yml template and signed releases."
 
