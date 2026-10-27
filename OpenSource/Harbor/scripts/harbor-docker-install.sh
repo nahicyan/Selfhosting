@@ -6,9 +6,11 @@ set -euo pipefail
 # Follows Harbor's official installation guide with the ONLINE installer,
 # behind a host Nginx reverse proxy:
 #
-#   1. Download harbor-online-installer-<version>.tgz from the GitHub release
-#      and verify it with cosign, if installed (docs/signature-verification.md
-#      in the Harbor repo - releases are signed from v2.15.0)
+#   1. Download harbor-online-installer-<version>.tgz for the latest release
+#      and, if asked for (default no), verify it with cosign
+#      (docs/signature-verification.md in the Harbor repo - releases are signed
+#      from v2.15.0). Without cosign v2.4+ on this host, the latest cosign is
+#      downloaded for the run - nothing is installed
 #   2. cp harbor.yml.tmpl harbor.yml and set the values below
 #   3. sudo ./install.sh [--with-trivy] - run unmodified. It runs ./prepare,
 #      which renders harbor.yml into docker-compose.yml and common/config/,
@@ -62,8 +64,8 @@ NGINX_CONF_SRC="$SCRIPT_DIR/../harbor-nginx.conf"
 HARBOR_BASE="/var/www/docker/harbor"
 DEFAULT_PORT="8095"
 MIN_VERSION="v2.15.0"
-RELEASES_API="https://api.github.com/repos/goharbor/harbor/releases?per_page=100"
 RELEASES_DL="https://github.com/goharbor/harbor/releases/download"
+COSIGN_DL="https://github.com/sigstore/cosign/releases/download"
 
 # Every container name Harbor's compose file can create (trivy-adapter only
 # with --with-trivy, harbor-exporter only with metrics enabled).
@@ -103,6 +105,16 @@ _valid_admin_secret() {
   _valid_secret "$1" && [[ "$1" =~ [[:upper:]] ]] && [[ "$1" =~ [[:lower:]] ]] && [[ "$1" =~ [[:digit:]] ]]
 }
 
+# Throw away keystrokes typed ahead of a prompt. Nothing typed at a hidden
+# (read -s) prompt is echoed, so a stray Enter there - a double tap, or a pasted
+# password ending in a newline - would otherwise silently answer the next
+# question.
+_flush_input() {
+  local junk
+  [ -t 0 ] || return 0
+  read -r -s -t 0.1 -N 100000 junk 2>/dev/null || true
+}
+
 # 24 alphanumerics, retried until all three character classes are present.
 _gen_secret() {
   local s
@@ -116,13 +128,13 @@ _ask_secret() {  # _ask_secret <var-name> <label> <validator> <rule>
   local -n _ref="$1"
   local label="$2" validator="$3" rule="$4" first second
   while :; do
-    read -rsp "  ${label} (blank = generate a strong one): " first; echo
+    read -rsp "  ${label} (blank = generate a strong one): " first; echo; _flush_input
     if [[ -z "$first" ]]; then
       _ref="$(_gen_secret)"
       echo "    Generated: ${_ref}"
       return 0
     fi
-    read -rsp "  Confirm ${label}: " second; echo
+    read -rsp "  Confirm ${label}: " second; echo; _flush_input
     if [[ "$first" != "$second" ]]; then
       echo "    Values do not match - try again."
       continue
@@ -138,6 +150,20 @@ _ask_secret() {  # _ask_secret <var-name> <label> <validator> <rule>
 
 _version_ge() {  # _version_ge <a> <b>  ->  true when a >= b
   [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1)" = "$2" ]
+}
+
+# Newest stable release tag of a GitHub repo by version number, or empty if
+# GitHub cannot be reached. Not GitHub's releases/latest: that is just the most
+# recently published release, and Harbor and cosign both keep shipping patches
+# for older branches (Harbor v2.14.6 came out after v2.15.4), so it often names
+# an older line.
+_latest_release() {  # _latest_release <owner/repo>
+  curl -fsSL --max-time 15 "https://api.github.com/repos/$1/releases?per_page=100" 2>/dev/null \
+    | awk -F'"' '
+        $2 == "tag_name"   { tag = $4 }
+        $2 == "draft"      { draft = ($3 ~ /true/) }
+        $2 == "prerelease" { if (tag != "" && !draft && $3 ~ /false/) print tag; tag = "" }' \
+    | grep -xE 'v[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -n1 || true
 }
 
 # Replace one line of harbor.yml by exact whole-line match. Dies unless the line
@@ -168,7 +194,7 @@ docker compose version >/dev/null 2>&1 \
   || _die "the Docker Compose plugin ('docker compose') is not installed. Install it (https://docs.docker.com/compose/install/linux/), then run this script again."
 docker info >/dev/null 2>&1 \
   || _die "cannot talk to Docker - is it running, and is $(id -un) in the docker group?"
-for cmd in curl openssl tar ss sed awk sort mktemp; do
+for cmd in curl openssl tar ss sed awk sort mktemp sha256sum uname; do
   command -v "$cmd" >/dev/null 2>&1 || _die "'$cmd' is required but not installed."
 done
 
@@ -245,20 +271,12 @@ if _port_in_use "$port"; then
 fi
 
 # ── Version ───────────────────────────────────────────────────────────────────
-# Always the newest stable release by version number. Not GitHub's
-# releases/latest: that is just the most recently published release, and Harbor
-# keeps shipping patches for older branches (v2.14.6 came out after v2.15.4),
-# so it often names an older line.
+# Always the newest stable release (see _latest_release).
 echo ""
 echo "==> Looking up the latest Harbor release"
-version="$(curl -fsSL --max-time 15 "$RELEASES_API" 2>/dev/null \
-  | awk -F'"' '
-      $2 == "tag_name"   { tag = $4 }
-      $2 == "draft"      { draft = ($3 ~ /true/) }
-      $2 == "prerelease" { if (tag != "" && !draft && $3 ~ /false/) print tag; tag = "" }' \
-  | grep -xE 'v[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -n1 || true)"
+version="$(_latest_release goharbor/harbor)"
 [[ -n "$version" ]] || \
-  _die "could not look up the latest Harbor release on GitHub ($RELEASES_API) - check this host's internet access and try again."
+  _die "could not look up the latest Harbor release on GitHub - check this host's internet access and try again."
 echo "    Latest release: $version"
 _version_ge "$version" "$MIN_VERSION" || \
   _die "$version is older than $MIN_VERSION. This script is written against the $MIN_VERSION+ harbor.yml template and signed releases."
@@ -285,31 +303,47 @@ _ask_secret db_password "Harbor database password" _valid_secret \
   "Use 8-128 characters from A-Z a-z 0-9 . _ ~ -"
 
 # ── Signature verification ────────────────────────────────────────────────────
-# Harbor signs with Sigstore's newer bundle format. cosign v2.5+ reads it with
-# the documented command as-is; v2.4.x only with --new-bundle-format; anything
-# older cannot read it at all and would report a valid file as a bad signature.
+# Optional, default no. Harbor signs with Sigstore's newer bundle format:
+# cosign v2.5+ reads it with the documented command as-is, v2.4.x only with
+# --new-bundle-format, and anything older cannot read it at all. If asked for,
+# an installed cosign that can read it is used. Otherwise the latest cosign
+# release is downloaded into the temporary directory for this run only (after
+# the summary is confirmed) and checked against its published SHA-256 sums.
 echo ""
+echo "cosign can verify that the installer was signed by Harbor's release workflow."
 verify_sig=false
+COSIGN="cosign"
 COSIGN_ARGS=()
+cosign_dl=""
 cosign_ver=""
 command -v cosign >/dev/null 2>&1 && \
   cosign_ver="$(cosign version 2>/dev/null | sed -n 's/^GitVersion:[[:space:]]*//p' | head -n1 || true)"
 if [[ -n "$cosign_ver" ]] && _version_ge "$cosign_ver" v2.4.0; then
+  read -rp "Verify the installer's signature with the installed cosign ($cosign_ver)? [y/N] " ans_sig
+else
+  cosign_ver=""
+  read -rp "Download cosign and verify the installer's signature with it? [y/N] " ans_sig
+fi
+
+if [[ ! "$ans_sig" =~ ^[Yy]$ ]]; then
+  sig_status="skipped"
+elif [[ -n "$cosign_ver" ]]; then
   verify_sig=true
   _version_ge "$cosign_ver" v2.5.0 || COSIGN_ARGS=(--new-bundle-format)
   sig_status="cosign $cosign_ver"
 else
-  if command -v cosign >/dev/null 2>&1; then
-    sig_status="SKIPPED - cosign ${cosign_ver:-(unknown version)} is older than v2.4.0"
-    echo "WARNING: cosign ${cosign_ver:-(unknown version)} cannot read Harbor's signature bundles."
-    echo "         Upgrade cosign (see Harbor.md) to verify the installer."
-  else
-    sig_status="SKIPPED - cosign not installed"
-    echo "WARNING: cosign is not installed, so the installer's signature cannot be"
-    echo "         verified. To verify, install cosign (see Harbor.md) and re-run."
-  fi
-  read -rp "Continue without verifying the signature? [y/N] " ans_sig
-  [[ "$ans_sig" =~ ^[Yy]$ ]] || _die "Aborted - install cosign and re-run."
+  verify_sig=true
+  case "$(uname -m)" in
+    x86_64)  cosign_dl="cosign-linux-amd64" ;;
+    aarch64) cosign_dl="cosign-linux-arm64" ;;
+    *) _die "cosign publishes no build for this CPU ($(uname -m)). Install cosign v2.4+ (Harbor.md -> Prerequisites) and re-run." ;;
+  esac
+  echo "==> Looking up the latest cosign release"
+  cosign_ver="$(_latest_release sigstore/cosign)"
+  [[ -n "$cosign_ver" ]] || \
+    _die "could not look up the latest cosign release on GitHub - check this host's internet access and try again."
+  echo "    Latest release: $cosign_ver (used for this run only, not installed)"
+  sig_status="cosign $cosign_ver (downloaded for this run)"
 fi
 
 # ── Summary ───────────────────────────────────────────────────────────────────
@@ -348,10 +382,24 @@ curl -fL --retry 3 --progress-bar -o "$TMP_DIR/$INSTALLER" "$INSTALLER_URL" \
   || _die "download failed: $INSTALLER_URL"
 
 if $verify_sig; then
+  if [[ -n "$cosign_dl" ]]; then
+    echo "==> Downloading cosign $cosign_ver"
+    curl -fL --retry 3 --progress-bar -o "$TMP_DIR/$cosign_dl" "$COSIGN_DL/$cosign_ver/$cosign_dl" \
+      || _die "download failed: $COSIGN_DL/$cosign_ver/$cosign_dl"
+    curl -fsSL --retry 3 -o "$TMP_DIR/cosign_checksums.txt" "$COSIGN_DL/$cosign_ver/cosign_checksums.txt" \
+      || _die "could not download cosign_checksums.txt"
+    (cd "$TMP_DIR" && awk -v f="$cosign_dl" '$2 == f' cosign_checksums.txt | sha256sum -c --quiet) \
+      || _die "$cosign_dl does not match cosign_checksums.txt - do not use this file."
+    chmod 755 "$TMP_DIR/$cosign_dl"
+    COSIGN="$TMP_DIR/$cosign_dl"
+    "$COSIGN" version >/dev/null 2>&1 \
+      || _die "the downloaded cosign does not run (is $(dirname "$TMP_DIR") mounted noexec?). Install cosign v2.4+ (Harbor.md -> Prerequisites) and re-run."
+  fi
+
   echo "==> Verifying the signature (cosign verify-blob)"
   curl -fsSL --retry 3 -o "$TMP_DIR/$INSTALLER.sigstore.json" "$INSTALLER_URL.sigstore.json" \
     || _die "could not download $INSTALLER.sigstore.json"
-  cosign verify-blob ${COSIGN_ARGS[@]+"${COSIGN_ARGS[@]}"} \
+  "$COSIGN" verify-blob ${COSIGN_ARGS[@]+"${COSIGN_ARGS[@]}"} \
     --bundle "$TMP_DIR/$INSTALLER.sigstore.json" \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
     --certificate-identity-regexp '^https://github.com/goharbor/harbor/.github/workflows/publish_release.yml@refs/tags/v.*$' \

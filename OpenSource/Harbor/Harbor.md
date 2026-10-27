@@ -52,8 +52,11 @@ The installed instance lives at `/var/www/docker/harbor/<domain>/`:
 - A public DNS record for the domain — Harbor issues registry tokens and push
   URLs against it, so it must be the name clients use
 - `127.0.0.1:1514` free (Harbor's log collector)
-- Optional but recommended: **cosign v2.5+** (v2.4 also works) to verify the
-  installer's signature. Without it the script asks before continuing unverified.
+- cosign is **not** required. The script asks whether to verify the
+  installer's signature (default no). If yes, it uses the host's cosign if it
+  is v2.4+, otherwise it downloads the latest cosign release into a temporary
+  directory for that run only and checks it against cosign's published SHA-256
+  sums. To keep a cosign on the host anyway:
 
   ```bash
   curl -LO https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64
@@ -76,6 +79,8 @@ You'll be prompted for:
 - **Admin password** — blank generates one. Harbor's policy applies: 8–128
   characters, one uppercase, one lowercase, one digit.
 - **Database password** — blank generates one
+- **Signature check** — verify the installer with cosign (default no); see
+  Prerequisites
 
 Passwords are limited to `A-Z a-z 0-9 . _ ~ -`. They end up in YAML, in the env
 files `prepare` generates (Compose expands `$` there) and in the SQL that sets
@@ -87,8 +92,8 @@ the database password, and those characters need no escaping in any of them.
    directory already exist, or if the instance directory isn't empty
 2. Downloads `harbor-online-installer-<version>.tgz` for the latest stable
    release (the highest version number, not GitHub's "Latest" badge, which can
-   sit on a patch for an older branch) and,
-   with cosign, verifies it exactly as
+   sit on a patch for an older branch) and, if you chose to, verifies it with
+   cosign exactly as
    [Harbor's signature guide](https://github.com/goharbor/harbor/blob/main/docs/signature-verification.md)
    documents (`--new-bundle-format` is added for cosign 2.4.x, which needs it)
 3. Extracts it to `/var/www/docker/harbor/<domain>/harbor/`
