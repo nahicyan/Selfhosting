@@ -23,20 +23,16 @@ You'll be asked for:
 
 Everything else is handled automatically.
 
-### Known issue: the MinIO image (until Plane ships a fix)
+### Object storage: the MinIO image
 
-MinIO removed its Docker Hub organisation, so `docker pull minio/minio` fails with *requested access to the resource is denied*, and the latest release (v1.4.2, as well as v1.4.1) still names `minio/minio:latest`. The installer will stop at its image pull. Plane fixed this on its `preview` branch on 2026-09-15 (makeplane/plane#9829) by pinning `quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z`, but no release includes it yet.
+MinIO has removed its images from Docker Hub (`minio/minio`) and from quay.io (`quay.io/minio/minio`). Plane releases up to v1.4.2 named `minio/minio:latest`, so for a while this installer stopped at its image pull. That is fixed upstream, and **nothing needs editing during install**:
 
-Until one does, answer **y** to *"review/edit docker-compose.yaml before starting?"* (it comes before the pull) and change the `plane-minio` image line to that reference:
+- On 2026-09-28 Plane re-published v1.4.2's `docker-compose.yml` with `docker.io/pgsty/minio:RELEASE.2026-08-04T00-00-00Z`, a community-maintained MinIO fork. That is the file the installer downloads.
+- v1.4.3 (in release candidates since 2026-10-06) moves to `docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z`. That is the same fork after it was renamed Silo. It keeps MinIO's on-disk format, the `MINIO_*` settings, the `plane-minio` service and the `uploads` volume, so nothing here changes. One detail: its server binary is `silo` and the image has no `minio` binary.
 
-```yaml
-  plane-minio:
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
-```
+The earlier workaround (editing the image to `quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z`) no longer works: quay now refuses anonymous pulls. Don't use it.
 
-An instance that already has its images is not affected. The same applies to a new server before a restore, since Full recovery needs the instance installed first.
-
-**Already running a server?** It keeps working, but it can no longer pull that image, and MinIO's community edition is unmaintained. [`migration/`](migration/README.md) has the analysis (including what Plane has and hasn't provided), a runbook, and three step scripts that back up, save the working image, and pin the compose file to a source that still exists.
+**Already running a server installed before the fix?** Its compose file still names `minio/minio:latest`. The stack keeps running while the image is cached, but anything that pulls (an upgrade, a rebuilt host) fails. [`migration/`](migration/README.md) moves it to Plane's image with a backup, a saved copy of the old image, and a verified switch that rolls itself back. A normal [upgrade](#upgrading) to Plane's current compose file does the same thing in one step, with less checking.
 
 ## What the install script does
 
@@ -54,6 +50,8 @@ Each domain is its own Compose project (`plane-<domain-with-dashes>`), so severa
 ## Architecture note
 
 Plane's compose stack ships its own reverse proxy container (`makeplane/plane-proxy`, Caddy-based) that fronts `web`, `api`, `space`, `admin`, and `live` (the websocket service behind real-time collaboration) behind a single port. That container is kept — it still does the internal routing between Plane's five HTTP services — but it's rebound to loopback so the host's Nginx becomes the actual internet-facing edge, matching every other app in this repo. Don't remove or bypass the `proxy` service; point Nginx at it instead.
+
+Plane's reverse-proxy page now gives Community Edition a different recipe: remove the bundled proxy, put your proxy on Plane's Docker network, and route `/api`, `/auth`, `/live`, `/god-mode`, `/spaces` and `/uploads` to the individual containers yourself. That works too, but this setup keeps the bundled proxy on purpose. Its routing table ships with each release, so an upgrade can't leave Nginx routing paths that have moved. `SITE_ADDRESS=:80` (step 4) is what makes the bundled proxy serve plain HTTP behind Nginx.
 
 ## Nginx config
 
@@ -76,7 +74,11 @@ The install script prints the exact `$COMPOSE` invocation (with your project nam
 
 ## Upgrading
 
-Take a [backup](#backup) first. Then download the new release's `docker-compose.yml` (`https://github.com/makeplane/plane/releases/download/<tag>/docker-compose.yml`) over `docker-compose.yaml` and re-apply what the installer did to it (the loopback `host_ip` lines, and the MinIO image above while the bug lasts). Keep your `plane.env`, set `APP_RELEASE=<tag>` in it, and add any keys that are new in that release's `variables.env`. Then `$COMPOSE pull && $COMPOSE up -d`. The migrator brings the database schema forward on start.
+Take a [backup](#backup) first. Then download the new release's `docker-compose.yml` (`https://github.com/makeplane/plane/releases/download/<tag>/docker-compose.yml`) over `docker-compose.yaml` and re-apply the installer's one patch, the loopback `host_ip` lines: `sed -i '/mode: host/a\        host_ip: 127.0.0.1' docker-compose.yaml`. Keep your `plane.env`, set `APP_RELEASE=<tag>` in it, and add any keys that are new in that release's `variables.env`. Then `$COMPOSE pull && $COMPOSE up -d`. The migrator brings the database schema forward on start.
+
+If the new compose file names a different MinIO image (v1.4.2's re-published file names `pgsty/minio`, v1.4.3's names `pgsty/silo`), `up -d` recreates `plane-minio` from it on the same `uploads` volume. That is a forward upgrade of the same storage format, and it is what Plane's own upgrade does. Don't plan to go back to an older MinIO image afterwards: restore the backup instead. For a server still on `minio/minio:latest`, [`migration/`](migration/README.md) does this one step on its own, with checks.
+
+Coming in a later release (on Plane's `preview` branch, not in v1.4.3-rc2): `NUM_PROXIES`, which sets how many proxies the API skips when it reads the client IP for rate limiting. In this layout there are two, Nginx and Plane's bundled proxy, plus one more for a CDN hop such as Cloudflare's proxy. When a release's `variables.env` gains the key, set it accordingly. Left empty, Plane keeps its current behaviour.
 
 Plane's official `setup.sh upgrade` does **not** apply here: it manages a `plane-app/` folder that this install does not have.
 
@@ -124,7 +126,7 @@ Pick a snapshot, the instance to restore into, and what to restore:
 
 It checks the dump and archive **before** stopping anything, takes a safety copy of what it is about to replace (`<install-dir>/pre-restore-<time>/`: `plane.env`, a database dump, the uploads), and needs you to type `restore`. If a step fails part-way it says where the safety copies are, and the snapshot itself is never modified, so you can fix the cause and run it again.
 
-**New server:** run `plane-docker-install.sh` with the **same domain** (mind the [MinIO note](#known-issue-the-minio-image-until-plane-ships-a-fix)), then choose **Full recovery**. The installer generated new random passwords, and PostgreSQL only reads its password when its volume is first created, so Full recovery restores the snapshot's `plane.env` and re-creates the database volume so the old password applies. It refuses to restore the configuration of a different domain.
+**New server:** run `plane-docker-install.sh` with the **same domain**, then choose **Full recovery**. The new install runs Plane's current MinIO image, which is the same release or newer than the one that wrote any earlier snapshot, so the uploads restore as they are (see [the MinIO note](#object-storage-the-minio-image)). The installer generated new random passwords, and PostgreSQL only reads its password when its volume is first created, so Full recovery restores the snapshot's `plane.env` and re-creates the database volume so the old password applies. It refuses to restore the configuration of a different domain.
 
 `docker-compose.yaml` is deliberately not restored. It is a per-release file plus the installer's loopback patch, all the state is in `plane.env`, and an old copy could bring back references that no longer work (such as the retired `minio/minio` image). If yours differs from the snapshot's, the restore says so, and the old copy stays in the snapshot.
 

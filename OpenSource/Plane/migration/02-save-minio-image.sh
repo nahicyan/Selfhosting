@@ -3,9 +3,10 @@ set -euo pipefail
 # =============================================================================
 # Plane MinIO migration - step 2 of 3: SAVE THE WORKING IMAGE
 # =============================================================================
-# The MinIO image this server runs is no longer available from Docker Hub, and
-# MinIO's repository is archived. If it is ever lost (a server rebuild, `docker
-# image prune -a` while the container is down) it cannot be pulled again. This
+# The MinIO image this server runs is no longer available from Docker Hub or
+# quay.io, and MinIO's repository is archived. If it is ever lost (a server rebuild,
+# `docker image prune -a` while the container is down) it cannot be pulled again,
+# and it is the only way back to the exact release that runs now. This
 # saves the exact image the running container uses:
 #
 #   1. a local tag  plane-minio-rollback:<version>  on the same image, so nothing

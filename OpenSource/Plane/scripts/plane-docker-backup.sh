@@ -44,30 +44,34 @@ set -euo pipefail
 # =============================================================================
 
 # =============================================================================
-# MINIO SITUATION - notes for maintainers and LLMs (written 2026-09-19)
+# MINIO SITUATION - notes for maintainers and LLMs (updated 2026-10-28)
 # =============================================================================
 # Full analysis, evidence and runbook: ../migration/README.md. For THIS script:
 #
-# Background. Plane's bundled object storage is MinIO. MinIO declared its repository
-# unmaintained and removed its Docker Hub organisation (`docker pull minio/minio` is
-# denied). Plane has published neither a replacement nor a migration for existing
-# installs (issue makeplane/plane #8774: open, no reply from the Plane team; the image
-# fix in #9829 is on the preview branch only, in no release). The owner decided
-# (2026-09-19) to KEEP bundled MinIO for now, pinned to a source that still exists.
+# Background. Plane's bundled object storage is MinIO. MinIO removed its images from
+# Docker Hub and from quay.io. Plane's releases now name a community fork instead:
+# v1.4.2 (re-published 2026-09-28) docker.io/pgsty/minio:RELEASE.2026-08-04T00-00-00Z,
+# and v1.4.3 its renamed successor docker.io/pgsty/silo. Both keep MinIO's on-disk
+# format, the plane-minio service and the uploads volume. Servers installed before
+# that still name minio/minio: ../migration/ moves them to Plane's image.
 #
-# What this script does about it: nothing has to change while MinIO stays. The
-# database dump (step 6) and the configuration copy (step 8) do not involve MinIO.
-# The uploads step (step 7) reads the MinIO data VOLUME through a read-only busybox
-# container, so it works whatever image MinIO runs from.
+# What this script does about it: nothing has to change. The database dump (step 6)
+# and the configuration copy (step 8) do not involve MinIO. The uploads step (step 7)
+# reads the MinIO data VOLUME through a read-only busybox container, so it works
+# whatever image MinIO runs from (MinIO, pgsty/minio or Silo).
 #
 # What to know
 #   - uploads/uploads.tar.gz is MinIO's ON-DISK format (an xl.meta per object plus
-#     .minio.sys metadata). It can only be restored into a MinIO of the same or a
-#     newer release, and into no other S3 server (their formats differ).
-#   - The manifest records Plane's release but NOT MinIO's. Improvement, deliberately
-#     not implemented (comments only were requested): add the output of
-#     `docker compose ... exec -T plane-minio minio --version`, so that a restore can
-#     refuse to load newer data into an older MinIO.
+#     .minio.sys metadata). Restore it only into a MinIO-family server (MinIO,
+#     pgsty/minio, Silo) of the same or a newer release, and into no other S3 server
+#     (their formats differ). Plane upgrades now move this release forward
+#     (2025-09-07 -> 2026-08-04 -> Silo 2026-09-16), so an older server reading data a
+#     newer one wrote is a real possibility on a rebuilt host.
+#   - The manifest records Plane's release but NOT MinIO's. Improvement, not
+#     implemented yet: record the server's release, from
+#     `docker compose ... exec -T plane-minio minio --version` or, on Silo (no `minio`
+#     binary), `silo --version`, so that a restore can refuse to load newer data into
+#     an older server.
 #   - Nothing but snapshot folders may live under <backup-root>/plane/<domain>/: step
 #     10 prunes every folder there beyond RETAIN_COUNT and plane-docker-restore.sh
 #     lists every folder there as a snapshot. That is why

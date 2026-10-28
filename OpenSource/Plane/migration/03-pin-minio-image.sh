@@ -3,20 +3,21 @@ set -euo pipefail
 # =============================================================================
 # Plane MinIO migration - step 3 of 3: PIN THE MINIO IMAGE
 # =============================================================================
-# Points the compose file's plane-minio image at a source that still exists, so
-# `docker compose pull`, rebuilds and new servers stop depending on the image
-# MinIO removed from Docker Hub. Background and the full analysis: README.md in
-# this folder.
+# Points the compose file's plane-minio image at the image Plane's current release
+# names, so `docker compose pull`, upgrades, rebuilds and new servers stop depending
+# on an image MinIO no longer serves (Docker Hub minio/minio, quay.io/minio/minio).
+# Background and the full analysis: README.md in this folder.
 #
 # Two targets:
-#   quay    quay.io/minio/minio:<pinned tag> - the reference Plane merged
-#           upstream (makeplane/plane #9829). Offered ONLY when the running MinIO
-#           is that exact release, so this changes where the image is pulled
-#           from, not the software.
+#   plane   TARGET_IMAGE (lib.sh): docker.io/pgsty/minio:<RELEASE tag>, what Plane's
+#           v1.4.2 compose file names since it was re-published on 2026-09-28.
+#           Offered ONLY when the running MinIO is that release or OLDER: a forward
+#           upgrade of the same server and format, the same change Plane's own
+#           upgrade makes. Never offered as a downgrade (an older MinIO opening
+#           data written by a newer one can fail).
 #   local   plane-minio-rollback:<version> - the copy step 2 saved of the image
-#           that runs now. Used when the versions differ (an older MinIO opening
-#           data written by a newer one can fail). It cannot be pulled: carry the
-#           step-2 archive to any new server and `docker load` it there.
+#           that runs now: same software, no upgrade. It cannot be pulled: carry
+#           the step-2 archive to any new server and `docker load` it there.
 #
 # What it does, in this order, and where it can stop safely:
 #   1. checks (running MinIO, saved rollback image, fresh backup) .... changes nothing
@@ -26,13 +27,16 @@ set -euo pipefail
 #   5. recreates ONLY the plane-minio container (its data volume is untouched;
 #      uploads fail for a few seconds)
 #   6. waits for MinIO's health endpoint, then requires the same object count and
-#      bytes as before, and the same MinIO version
+#      bytes as before, and the release the target carries
 # If step 4-6 fails in any way it restores the compose file and the old container
-# by itself, and tells you what state it ended in.
+# by itself, and tells you what state it ended in. After an upgrade has started,
+# that puts the old MinIO back on a volume the new one has opened: MinIO-family
+# servers keep the format and the test in README.md read it back, but the backup
+# is the guaranteed way back.
 #
-# Testing/advanced: MINIO_TARGET_TAG=<tag> or MINIO_TARGET_IMAGE=<full ref>
-# override the target (see lib.sh). With MINIO_TARGET_IMAGE the version check is
-# skipped: you are on your own.
+# Advanced: MINIO_TARGET_IMAGE=<full ref> overrides the target (see lib.sh), e.g.
+# docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z to follow v1.4.3. Its tag must
+# be the plain RELEASE.<date> the server prints: the same checks apply to it.
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -63,15 +67,16 @@ mapfile -t COMPOSE_IMAGES < <(compose_minio_images)
 [ "${#COMPOSE_IMAGES[@]}" -eq 1 ] || _die "expected exactly one plane-minio image line in $COMPOSE_FILE, found ${#COMPOSE_IMAGES[@]}. It was edited by hand: see README.md ('Notes for LLMs') before changing it."
 OLD_IMAGE="${COMPOSE_IMAGES[0]}"
 
-if [ "$OLD_IMAGE" = "$TARGET_IMAGE" ] || [[ "$OLD_IMAGE" == "$ROLLBACK_REPO":* ]]; then
-  echo ""
-  echo "Already pinned: the compose file names $OLD_IMAGE. Nothing to do."
-  exit 0
-fi
-if ! [[ "$OLD_IMAGE" == minio/minio* || "$OLD_IMAGE" == docker.io/minio/minio* ]]; then
-  _die "the compose file names '$OLD_IMAGE', which this step does not recognise. See README.md before changing it."
-fi
+case "$(image_kind "$OLD_IMAGE")" in
+  target|plane)
+    echo ""
+    echo "Already done: the compose file names $OLD_IMAGE, an image from Plane's releases. Nothing to do."
+    exit 0 ;;
+  gone|local) ;;
+  *) _die "the compose file names '$OLD_IMAGE', which this step does not recognise. See README.md before changing it." ;;
+esac
 docker image inspect "$OLD_IMAGE" >/dev/null 2>&1 || _die "the image '$OLD_IMAGE' is not present locally (it could not be pulled again). Stop and read README.md."
+[[ "$PINNED_TAG" == RELEASE.* ]] || _die "the target '$TARGET_IMAGE' has no RELEASE.<date> tag, so its version cannot be checked. See lib.sh."
 
 # ── 3. The rollback image must exist (step 2) ───────────────────────────────
 docker image inspect "$ROLLBACK_TAG" >/dev/null 2>&1 \
@@ -81,21 +86,33 @@ docker image inspect "$ROLLBACK_TAG" >/dev/null 2>&1 \
 echo ""
 echo "Compose names   : $OLD_IMAGE"
 echo "Running MinIO   : $VERSION"
+[ -z "${MINIO_TARGET_IMAGE:-}" ] || echo "Target override : MINIO_TARGET_IMAGE=$MINIO_TARGET_IMAGE"
 TARGET=""
-if [ -n "${MINIO_TARGET_IMAGE:-}" ]; then
-  echo "WARNING: MINIO_TARGET_IMAGE is set - the version check is skipped."
-  TARGET="$TARGET_IMAGE"
-elif [ "$VERSION" = "$PINNED_TAG" ]; then
-  echo "Version check   : MATCH with the quay pin ($PINNED_TAG)."
+if release_le "$VERSION" "$PINNED_TAG"; then
+  if [ "$VERSION" = "$PINNED_TAG" ]; then
+    echo "Version check   : SAME release as the target ($PINNED_TAG)."
+  else
+    echo "Version check   : UPGRADE $VERSION -> $PINNED_TAG (a newer release of the same server)."
+  fi
   echo ""
-  echo "Pin to:"
-  echo "  1) $TARGET_IMAGE   (recommended: same software, a source that exists)"
-  echo "  2) $ROLLBACK_TAG   (your saved copy; cannot be pulled on a new server)"
-  read -rp "Select [1/2]: " CHOICE
-  case "$CHOICE" in 1) TARGET="$TARGET_IMAGE" ;; 2) TARGET="$ROLLBACK_TAG" ;; *) _die "Invalid selection." ;; esac
+  echo "Switch to:"
+  echo "  1) $TARGET_IMAGE   (recommended: what Plane's release names; pullable anywhere)"
+  if [ "$OLD_IMAGE" != "$ROLLBACK_TAG" ]; then
+    echo "  2) $ROLLBACK_TAG   (your saved copy: no upgrade, but cannot be pulled on a new server)"
+    read -rp "Select [1/2]: " CHOICE
+    case "$CHOICE" in 1) TARGET="$TARGET_IMAGE" ;; 2) TARGET="$ROLLBACK_TAG" ;; *) _die "Invalid selection." ;; esac
+  else
+    echo "  q) abort"
+    read -rp "Select [1/q]: " CHOICE
+    case "$CHOICE" in 1) TARGET="$TARGET_IMAGE" ;; *) echo "Aborted."; exit 0 ;; esac
+  fi
 else
-  echo "Version check   : MISMATCH - the pin is $PINNED_TAG. Pinning to quay would change the MinIO"
-  echo "                  version, and an older MinIO opening newer data can fail. Refusing that."
+  echo "Version check   : the running MinIO is NEWER than the target ($PINNED_TAG). Switching would"
+  echo "                  downgrade it, and an older MinIO opening newer data can fail. Refusing that."
+  if [ "$OLD_IMAGE" = "$ROLLBACK_TAG" ]; then
+    echo "The compose file already names your saved copy. Nothing to do; see README.md for a newer target."
+    exit 0
+  fi
   echo ""
   echo "Pin to:"
   echo "  1) $ROLLBACK_TAG   (your saved copy of the image that runs now)"
@@ -103,6 +120,8 @@ else
   read -rp "Select [1/q]: " CHOICE
   case "$CHOICE" in 1) TARGET="$ROLLBACK_TAG" ;; *) echo "Aborted."; exit 0 ;; esac
 fi
+# The release the container must report afterwards.
+if [ "$TARGET" = "$ROLLBACK_TAG" ]; then EXPECT="$VERSION"; else EXPECT="$PINNED_TAG"; fi
 
 # ── 5. Backup, baseline, confirmation ───────────────────────────────────────
 AGE="$(newest_backup_age_hours "$BACKUP_ROOT" || true)"
@@ -125,6 +144,7 @@ echo "Instance        : $DOMAIN ($PROJECT)"
 echo "Compose file    : $COMPOSE_FILE"
 echo "Change          : image: $OLD_IMAGE"
 echo "              -> image: $TARGET"
+echo "MinIO release   : $VERSION -> $EXPECT"
 echo "Recreated       : plane-minio only (its data volume is not touched)"
 echo "Bucket now      : ${BEFORE%%:*} objects, ${BEFORE##*:} bytes (must be identical afterwards)"
 echo "Downtime        : uploads and downloads of files fail for a few seconds"
@@ -221,7 +241,7 @@ echo "=== Verifying ==="
 NEW_CID="$(minio_cid || true)"
 [ -n "$NEW_CID" ] || fail "the plane-minio container is missing after the change"
 NEW_VERSION="$(minio_version "$NEW_CID" || true)"
-[ "$NEW_VERSION" = "$VERSION" ] || fail "MinIO reports '${NEW_VERSION:-nothing}', expected $VERSION"
+[ "$NEW_VERSION" = "$EXPECT" ] || fail "MinIO reports '${NEW_VERSION:-nothing}', expected $EXPECT"
 AFTER="$(s3_stats || true)"
 [ "$AFTER" = "$BEFORE" ] || fail "bucket contents changed: before $BEFORE, after ${AFTER:-unreadable} (objects:bytes)"
 echo "MinIO           : $NEW_VERSION, healthy, image $(minio_image_ref "$NEW_CID")"
@@ -240,7 +260,8 @@ rm -f "$TMP"; trap - EXIT
 echo ""
 echo "Done. The compose file now names $TARGET."
 if [ "$TARGET" != "$ROLLBACK_TAG" ]; then
-  echo "'docker compose pull' no longer depends on Docker Hub for MinIO."
+  echo "'docker compose pull' works for every service again. From now on Plane's upgrades move this"
+  echo "line (../README.md, 'Upgrading'); this migration is finished for this instance."
 else
   echo "MinIO is pinned to your own saved image, which no registry has: 'docker compose pull' now"
   echo "fails for that one service (denied). Use 'docker compose pull --ignore-pull-failures' or name"

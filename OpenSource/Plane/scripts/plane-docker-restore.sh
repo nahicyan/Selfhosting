@@ -34,32 +34,36 @@ set -euo pipefail
 # =============================================================================
 
 # =============================================================================
-# MINIO SITUATION - notes for maintainers and LLMs (written 2026-09-19)
+# MINIO SITUATION - notes for maintainers and LLMs (updated 2026-10-28)
 # =============================================================================
 # Full analysis, evidence and runbook: ../migration/README.md. For THIS script:
 #
-# Background. Plane's bundled object storage is MinIO. MinIO declared its repository
-# unmaintained and removed its Docker Hub organisation (`docker pull minio/minio` is
-# denied). Plane has published neither a replacement nor a migration for existing
-# installs (issue makeplane/plane #8774: open, no reply from the Plane team; the image
-# fix in #9829 is on the preview branch only, in no release). The owner decided
-# (2026-09-19) to KEEP bundled MinIO for now, pinned to a source that still exists.
+# Background. Plane's bundled object storage is MinIO. MinIO removed its images from
+# Docker Hub and from quay.io. Plane's releases now name a community fork instead:
+# v1.4.2 (re-published 2026-09-28) docker.io/pgsty/minio:RELEASE.2026-08-04T00-00-00Z,
+# and v1.4.3 its renamed successor docker.io/pgsty/silo. Both keep MinIO's on-disk
+# format, the plane-minio service and the uploads volume, so this script's steps
+# work unchanged.
 #
 # What this script must keep doing
 #   - It does NOT restore docker-compose.yaml (see the header). This matters for MinIO
-#     too: an old snapshot's compose file names `minio/minio:latest`, which can no
-#     longer be pulled. Restoring it over a working (pinned) one would break the next
-#     pull or recreate. Keep it that way unless the owner decides otherwise.
+#     too: an old snapshot's compose file names `minio/minio:latest` (or the quay.io
+#     pin from the 2026-09 workaround), neither of which can be pulled any more.
+#     Restoring it over a working one would break the next pull or recreate. Keep it
+#     that way unless the owner decides otherwise.
 #   - Step 11 empties the MinIO data volume and unpacks uploads.tar.gz into it. Only
-#     restore into a MinIO of the same or a newer release than the one that wrote the
-#     snapshot. The manifest does not record MinIO's release yet (see the backup
-#     script's notes): judge by the snapshot's date and ../migration/README.md.
-#   - NEW SERVER: Full recovery needs the instance installed first, and
-#     plane-docker-install.sh currently stops at its image pull (see its MINIO
-#     SITUATION note). A host with no working MinIO image needs
-#     `gunzip -c <archive> | docker load` (the archive that
-#     ../migration/02-save-minio-image.sh wrote to
-#     <backup-root>/plane-minio-image/<domain>/) or the quay pin BEFORE restoring.
+#     restore into a MinIO-family server (MinIO, pgsty/minio, Silo) of the same or a
+#     newer release than the one that wrote the snapshot. A fresh install runs Plane's
+#     current image, which is newer than any snapshot taken under minio/minio, so that
+#     direction is fine. The other direction (a snapshot written by Silo restored into
+#     an older server) is the one to avoid. The manifest does not record MinIO's
+#     release yet (see the backup script's notes): judge by the snapshot's
+#     docker-compose.yaml copy and ../migration/README.md.
+#   - NEW SERVER: run plane-docker-install.sh first (it installs Plane's current
+#     image), then Full recovery here. The saved image from
+#     ../migration/02-save-minio-image.sh (<backup-root>/plane-minio-image/<domain>/)
+#     is only needed to run the OLD MinIO release again; `gunzip -c <archive> |
+#     docker load` before restoring.
 #   - Step 3 treats every folder under <backup-root>/plane/<domain>/ as a snapshot:
 #     never keep other files or folders there.
 #
@@ -68,11 +72,9 @@ set -euo pipefail
 #     uploads. Restoring an old snapshot's uploads would fill a MinIO that is no longer
 #     used. Not checked today: add a refusal or a warning when the target has
 #     USE_MINIO=0.
-#   - Plane replaces MinIO with another S3 server: step 11 (empty the volume, untar)
-#     must become an S3 sync that matches the backup script's replacement. Keep the
-#     safety copy before it.
-#   - Plane ships a release that fixes the image: nothing here changes; the restore
-#     still must not overwrite the compose file.
+#   - Plane replaces MinIO with a server that is NOT MinIO-compatible: step 11 (empty
+#     the volume, untar) must become an S3 sync that matches the backup script's
+#     replacement. Keep the safety copy before it.
 # =============================================================================
 
 DEFAULT_BACKUP_ROOT="/home/backup"

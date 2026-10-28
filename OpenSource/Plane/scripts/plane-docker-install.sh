@@ -1,48 +1,40 @@
 #!/bin/bash
 set -euo pipefail
 # =============================================================================
-# MINIO SITUATION - notes for maintainers and LLMs (written 2026-09-19)
+# MINIO SITUATION - notes for maintainers and LLMs (updated 2026-10-28)
 # =============================================================================
-# THIS SCRIPT CURRENTLY STOPS AT `$COMPOSE_CMD pull` ("Pulling Docker images")
-# UNLESS THE WORKAROUND BELOW IS APPLIED. It is a known upstream problem, and this
-# script is deliberately NOT patched: the owner decided (2026-09-19) to leave the
-# install logic as it is and to document instead. Full analysis, evidence and the
-# runbook for servers that are already running: ../migration/README.md.
+# FIXED UPSTREAM: this script installs as it is, with no workaround. History,
+# evidence and the runbook for servers installed before the fix:
+# ../migration/README.md.
 #
 # What happened
-#   - MinIO declared its repository unmaintained and removed its Docker Hub
-#     organisation: `docker pull minio/minio` now answers "requested access to the
-#     resource is denied".
-#   - Every Plane release names that image. v1.4.2 (2026-08-23, the latest when this
-#     was written) and v1.4.1 both contain `image: minio/minio:latest`, and that is
-#     the docker-compose.yaml this script downloads.
-#   - Plane fixed it only on its default branch, preview (makeplane/plane #9829,
-#     commit f25814c, 2026-09-15): quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z.
-#     No release contains it. Plane has announced no replacement for MinIO (issue
-#     #8774, open since 2026-03-19, no reply from the Plane team) and no migration
-#     for existing installs.
+#   - MinIO removed its images from Docker Hub (`docker pull minio/minio` is denied)
+#     and later from quay.io too (401 for anonymous pulls, checked 2026-10-28).
+#     Releases up to v1.4.2 named minio/minio:latest, so this script stopped at its
+#     pull, and the quay.io workaround documented here on 2026-09-19 is dead too.
+#   - 2026-09-28: Plane re-published v1.4.2's docker-compose.yml (same tag, new
+#     asset) with docker.io/pgsty/minio:RELEASE.2026-08-04T00-00-00Z, a community
+#     MinIO fork by Pigsty, and closed makeplane/plane #8774. That is the file this
+#     script downloads.
+#   - v1.4.3 (release candidate rc2, 2026-10-23) moves to
+#     docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z: the same fork, renamed Silo.
+#     It keeps MinIO's on-disk format, the MINIO_* variables and the plane-minio
+#     service, so nothing below changes. Its server binary is `silo`: the image has no
+#     `minio` binary.
+#   - The install method itself is unchanged: Plane's setup.sh still downloads the
+#     release's docker-compose.yml and variables.env, as this script does.
 #
-# Workaround for a new install: answer "y" at "review/edit docker-compose.yaml"
-# (it comes BEFORE the pull) and change the plane-minio image line to
-# quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z.
-#
-# Servers installed earlier keep running (the image is cached locally): they are
-# handled by ../migration/ (preflight, save the image, pin it).
-#
-# If the situation changes (commands to check it: ../migration/README.md)
-#   - A Plane release ships a working image reference: the downloaded compose file is
-#     then already fine. Remove this note and the workaround from ../README.md.
-#   - Plane replaces MinIO with another S3 server: expect a new service name, new env
-#     keys and a new data format. Re-check every sed line in "Configure plane.env":
-#     AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are MinIO's root user and password in
-#     this compose file. Then update the backup script's uploads step (see its notes).
-#   - The owner moves uploads to external S3: the installer would have to ask for the
-#     endpoint, bucket, region and keys and set USE_MINIO=0 (Plane docs:
+# What this script assumes, and when to re-check it
+#   - AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are MinIO's root user and password
+#     (MINIO_ROOT_USER / MINIO_ROOT_PASSWORD in the compose file). On preview,
+#     variables.env ships them blank (makeplane/plane #10074); the sed lines in
+#     "Configure plane.env" still fill them, because they match the key, not the value.
+#   - If Plane replaces the bundled storage with a server that is NOT MinIO-compatible:
+#     expect a new service name, new env keys and a new data format. Re-check every
+#     sed line in "Configure plane.env", then the backup script's uploads step.
+#   - If the owner moves uploads to external S3: the installer would have to ask for
+#     the endpoint, bucket, region and keys and set USE_MINIO=0 (Plane docs:
 #     self-hosting/govern/database-and-storage, Community Edition section).
-#   - If asked to "fix the installer": the smallest correct change is ONE line between
-#     the download and the pull that replaces minio/minio:latest with the pinned quay
-#     image (migration/lib.sh, PINNED_TAG). Only with the owner's approval: they
-#     chose not to.
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

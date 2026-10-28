@@ -9,13 +9,14 @@ DEFAULT_BACKUP_ROOT="/home/backup"
 DEFAULT_PLANE_PATH="/var/www/docker/plane"
 COMPOSE_FILENAME="docker-compose.yaml"
 
-# The image Plane pinned upstream (makeplane/plane #9829, commit f25814c, on the
-# preview branch, 2026-09-15): the last regular MinIO community release, which
-# MinIO serves from quay.io after removing minio/minio from Docker Hub.
-# MINIO_TARGET_TAG / MINIO_TARGET_IMAGE override it - for testing, or if a later
-# tag is deliberately chosen (see README.md, "Notes for LLMs").
-PINNED_TAG="${MINIO_TARGET_TAG:-RELEASE.2025-09-07T16-13-09Z}"
-TARGET_IMAGE="${MINIO_TARGET_IMAGE:-quay.io/minio/minio:$PINNED_TAG}"
+# The image Plane's current release names for plane-minio: v1.4.2's compose file,
+# re-published on 2026-09-28, uses this Pigsty fork of MinIO (same on-disk format)
+# after MinIO removed its own images from Docker Hub and quay.io. v1.4.3 moves on to
+# the fork's renamed successor, docker.io/pgsty/silo (README.md).
+# MINIO_TARGET_IMAGE overrides it, e.g. to follow a newer release. Its tag must be
+# the plain RELEASE.<date> string the server prints: the version checks compare it.
+TARGET_IMAGE="${MINIO_TARGET_IMAGE:-docker.io/pgsty/minio:RELEASE.2026-08-04T00-00-00Z}"
+PINNED_TAG="${TARGET_IMAGE##*:}"
 ROLLBACK_REPO="plane-minio-rollback"
 FRESH_BACKUP_HOURS=24
 
@@ -106,14 +107,36 @@ minio_cid() { dc ps -q plane-minio 2>/dev/null | sed -n '1p'; }
 minio_image_ref() { docker inspect -f '{{.Config.Image}}' "$1" 2>/dev/null; }
 minio_image_id()  { docker inspect -f '{{.Image}}' "$1" 2>/dev/null; }
 
-# The MinIO release the container really runs: `minio --version` prints
-# "minio version RELEASE.2025-09-07T16-13-09Z (commit-id=...)".
+# The MinIO release the container really runs. MinIO and pgsty/minio print
+# "minio version RELEASE.2025-09-07T16-13-09Z (commit-id=...)"; pgsty/silo has no
+# minio binary and prints "silo version RELEASE.2026-09-16T00-00-00Z (...)".
 minio_version() {
-  docker exec "$1" minio --version 2>/dev/null </dev/null | grep -oE 'RELEASE\.[^ ]+' | sed -n '1p'
+  { docker exec "$1" minio --version 2>/dev/null </dev/null || docker exec "$1" silo --version 2>/dev/null </dev/null; } \
+    | grep -oE 'RELEASE\.[^ ]+' | sed -n '1p'
 }
 
+# release_le <a> <b> - true when MinIO release a is the same as or older than b.
+# RELEASE.YYYY-MM-DDTHH-MM-SSZ strings sort in date order, and the forks kept the scheme.
+release_le() { [ "$(printf '%s\n%s\n' "$1" "$2" | LC_ALL=C sort | sed -n '1p')" = "$1" ]; }
+
 # Image reference(s) the compose file gives plane-minio (only the minio image line).
-compose_minio_images() { grep -E "^[[:space:]]*image:[[:space:]]*.*(minio/minio|$ROLLBACK_REPO)" "$COMPOSE_FILE" | sed -E 's/^[[:space:]]*image:[[:space:]]*//; s/[[:space:]]+$//' || true; }
+compose_minio_images() { grep -E "^[[:space:]]*image:[[:space:]]*.*(minio/minio|pgsty/minio|pgsty/silo|$ROLLBACK_REPO)" "$COMPOSE_FILE" | sed -E 's/^[[:space:]]*image:[[:space:]]*//; s/[[:space:]]+$//' || true; }
+
+# image_kind <ref> - what a plane-minio image reference is:
+#   target  the image this migration switches to (TARGET_IMAGE)
+#   plane   another image from Plane's releases (pgsty/minio, pgsty/silo), e.g. after an upgrade
+#   local   plane-minio-rollback:<version>, the copy step 2 saved (an earlier step 3 may have pinned it)
+#   gone    a registry MinIO no longer serves: Docker Hub minio/minio, quay.io/minio/minio
+#   other   anything else
+image_kind() {
+  case "$1" in
+    "$TARGET_IMAGE") echo target ;;
+    "$ROLLBACK_REPO":*) echo local ;;
+    pgsty/minio:*|pgsty/silo:*|docker.io/pgsty/minio:*|docker.io/pgsty/silo:*) echo plane ;;
+    minio/minio|minio/minio:*|docker.io/minio/minio|docker.io/minio/minio:*|quay.io/minio/minio|quay.io/minio/minio:*) echo gone ;;
+    *) echo other ;;
+  esac
+}
 
 # registry_pullable <ref> - can this host read the image's manifest? (no pull)
 registry_pullable() { timeout 40 docker manifest inspect "$1" >/dev/null 2>&1; }
