@@ -1,0 +1,64 @@
+# Shared PostgreSQL — one server, many apps. See Postgres.md.
+#
+# Copied into /var/www/docker/postgres/<domain>/ by
+# scripts/postgres-docker-install.sh, which also writes the .env this file reads
+# (COMPOSE_PROJECT_NAME, POSTGRES_IMAGE, PG_PORT, POSTGRES_PASSWORD), conf/pg_hba.conf
+# and certs/.
+#
+# network_mode: host, on purpose. Ports Docker publishes bypass ufw, so a
+# published 5432 would be open to the internet whatever ufw says. On the host
+# network Postgres is an ordinary listening socket and ufw decides who reaches
+# it. Apps in other compose projects reach it over the external "postgres"
+# bridge network the installer creates (see Postgres.md -> Connecting an app).
+#
+# The service name (postgres) and this filename are a contract: the backup,
+# restore and manage scripts find instances by docker-compose.yml and address
+# the service by name.
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:18}
+    restart: unless-stopped
+    network_mode: host
+    # Docker's 64 MB default /dev/shm is too small for parallel queries.
+    shm_size: 256mb
+    # Room for the shutdown checkpoint, so a stop never turns into crash recovery.
+    stop_grace_period: 60s
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is not set in .env}
+      POSTGRES_INITDB_ARGS: --data-checksums
+      # The server, pg_isready, psql and pg_dump inside the container all read
+      # their default port from this, so nothing else has to pass -p.
+      PGPORT: ${PG_PORT:-5432}
+    command:
+      - postgres
+      - --listen_addresses=*
+      - --hba_file=/etc/postgresql/pg_hba.conf
+      - --ssl=on
+      - --ssl_cert_file=/etc/postgresql/certs/server.crt
+      - --ssl_key_file=/etc/postgresql/certs/server.key
+      # Verifies client certificates (pg_hba clientcert=verify-full).
+      - --ssl_ca_file=/etc/postgresql/certs/ca.crt
+      - --ssl_min_protocol_version=TLSv1.2
+      - --password_encryption=scram-sha-256
+      - --max_connections=200
+    volumes:
+      # 18+ keeps its data under /var/lib/postgresql/<major>/docker. An older
+      # POSTGRES_IMAGE needs /var/lib/postgresql/data here instead.
+      - data:/var/lib/postgresql
+      - ./conf/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./certs:/etc/postgresql/certs:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  data:
