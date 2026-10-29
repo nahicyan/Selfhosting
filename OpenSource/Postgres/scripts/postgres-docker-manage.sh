@@ -77,6 +77,10 @@ _exists() {  # _exists pg_roles|pg_database <name>
 # ── Instance ──────────────────────────────────────────────────────────────────
 command -v docker >/dev/null 2>&1 || _die "docker is required."
 command -v openssl >/dev/null 2>&1 || _die "openssl is required."
+# A fresh server is often root-only, with no sudo.
+if [[ $EUID -eq 0 ]]; then sudo() { "$@"; }
+else command -v sudo >/dev/null 2>&1 || _die "sudo is required (or run this script as root)."
+fi
 
 mapfile -t INSTANCES < <(find "$PG_BASE" -mindepth 2 -maxdepth 2 -name docker-compose.yml -printf '%h\n' 2>/dev/null | sort)
 [ ${#INSTANCES[@]} -gt 0 ] || _die "no instances found in $PG_BASE."

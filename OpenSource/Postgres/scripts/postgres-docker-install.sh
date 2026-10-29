@@ -30,6 +30,10 @@ set -euo pipefail
 #                       a postgres-docker-backup.sh snapshot, so certificates
 #                       already handed out keep working. Follow it with
 #                       postgres-docker-restore.sh, option 2 (everything).
+#
+# Every question comes first. A failure before PostgreSQL is healthy removes
+# what the run created, so it can simply be run again. After that nothing
+# aborts: whatever is left to do by hand is listed at the end.
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -44,12 +48,37 @@ DEFAULT_SUBNET="10.254.254.0/24"
 CA_DAYS=3650       # CA and server certificate
 CLIENT_DAYS=825    # client certificates - re-issue with postgres-docker-manage.sh
 
-STAGE=""
-trap 'if [[ -n "$STAGE" ]]; then rm -rf "$STAGE"; fi' EXIT
+STAGE="" BUILDING=false INSTALL_DIR="" ENV_FILE=""
+WARN=()
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 _die() { echo "ERROR: $*" >&2; exit 1; }
+# Shown where it happens, and again in the list at the end.
+_warn() { echo "WARNING: $*"; WARN+=("$*"); }
+
+dc() { docker compose --env-file "$ENV_FILE" -f "$INSTALL_DIR/docker-compose.yml" "$@"; }
+
+# While BUILDING, a failure (or Ctrl-C) removes everything this run created:
+# the directory, the container and its volume (both new - checked before the
+# summary) and the network if this run made it.
+_on_exit() {
+  local rc=$?
+  if [[ -n "$STAGE" ]]; then rm -rf "$STAGE"; fi
+  [[ $rc -ne 0 && "$BUILDING" == true ]] || return 0
+  echo "" >&2
+  if [ -f "$ENV_FILE" ] && [ -n "$(dc ps -aq postgres 2>/dev/null)" ]; then
+    echo "Last PostgreSQL log lines:" >&2
+    dc logs --no-color --tail 30 postgres >&2 || true
+  fi
+  echo "Install failed - removing what this run created, so it can be run again." >&2
+  if [ -f "$ENV_FILE" ]; then dc down -v >/dev/null 2>&1 || true; fi
+  if ! $NET_EXISTS; then docker network rm "$network" >/dev/null 2>&1 || true; fi
+  sudo rm -rf "$INSTALL_DIR" || true
+}
+trap _on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # A key from .env with one layer of quotes removed. Read, never sourced.
 _env_get() {  # _env_get <file> <key>
@@ -108,6 +137,10 @@ docker info >/dev/null 2>&1 \
 for cmd in openssl tar sed awk mktemp sha256sum; do
   command -v "$cmd" >/dev/null 2>&1 || _die "'$cmd' is required but not installed."
 done
+# A fresh server is often root-only, with no sudo.
+if [[ $EUID -eq 0 ]]; then sudo() { "$@"; }
+else command -v sudo >/dev/null 2>&1 || _die "sudo is required (or run this script as root)."
+fi
 [ -f "$COMPOSE_SRC" ] || _die "compose template not found at $COMPOSE_SRC"
 
 echo ""
@@ -224,6 +257,15 @@ else
   [[ "$subnet" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$ ]] || _die "'$subnet' is not an IPv4 CIDR."
 fi
 
+# Scheduled at the very end, where nothing it does can stop the install.
+cron_note=""
+if ! command -v crontab >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+  cron_note=" - installs cron, which is missing"
+fi
+read -rp "Schedule a nightly backup (02:30, to $DEFAULT_BACKUP_ROOT, keeps 7)$cron_note? [Y/n] " ans
+backup=yes
+[[ "$ans" =~ ^[Nn]$ ]] && backup=no
+
 image="${image:-$DEFAULT_IMAGE}"
 password="${password:-$(openssl rand -hex 24)}"
 
@@ -233,6 +275,10 @@ ENV_FILE="$INSTALL_DIR/.env"
 PROJECT_NAME="postgres-${domain//./-}"
 if [ -e "$INSTALL_DIR" ] && [ -n "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ]; then
   _die "$INSTALL_DIR already exists and is not empty - remove that instance first, or use another domain."
+fi
+# A leftover volume would keep its old data and superuser password.
+if docker volume inspect "${PROJECT_NAME}_data" >/dev/null 2>&1; then
+  _die "Docker volume ${PROJECT_NAME}_data already exists (from a removed instance?). Delete it with 'docker volume rm ${PROJECT_NAME}_data', or use another domain."
 fi
 
 echo ""
@@ -245,9 +291,11 @@ echo "Remote login    : TLS + password$([[ "$client_cert" == yes ]] && echo " + 
 echo "Docker network  : $network ($subnet)$($NET_EXISTS && echo ", existing")"
 echo "Image           : $image"
 echo "Install dir     : $INSTALL_DIR"
+echo "Nightly backup  : $([[ "$backup" == yes ]] && echo "02:30 to $DEFAULT_BACKUP_ROOT, keeps 7$cron_note" || echo no)"
 echo "================================================="
 read -rp "Proceed? [Y/n] " ans
 [[ "$ans" =~ ^[Nn]$ ]] && { echo "Aborted."; exit 0; }
+BUILDING=true
 
 # ── Instance directory ────────────────────────────────────────────────────────
 echo ""
@@ -343,7 +391,6 @@ POSTGRES_PASSWORD='$password'
 EOF
 )
 
-dc() { docker compose --env-file "$ENV_FILE" -f "$INSTALL_DIR/docker-compose.yml" "$@"; }
 dc config -q || _die "docker-compose.yml did not validate with this .env."
 
 # ── Image, and the server key's owner ─────────────────────────────────────────
@@ -354,26 +401,6 @@ dc pull -q
 # image, so the group id is always the one the server runs as.
 docker run --rm --entrypoint sh -v "$INSTALL_DIR/certs:/certs" "$image" \
   -c 'chown root:postgres /certs/server.key && chmod 640 /certs/server.key'
-
-# ── Firewall ──────────────────────────────────────────────────────────────────
-echo "==> ufw rules for port $port"
-if command -v ufw >/dev/null 2>&1; then
-  sudo ufw allow in on "$iface" from "$subnet" to any port "$port" proto tcp comment "postgres $domain - docker apps"
-  for src in $remote; do
-    if [[ "$src" == any ]]; then
-      sudo ufw allow "$port/tcp" comment "postgres $domain - remote"
-    else
-      sudo ufw allow from "$src" to any port "$port" proto tcp comment "postgres $domain - remote"
-    fi
-  done
-  if ! sudo ufw status | grep -q '^Status: active'; then
-    echo "WARNING: ufw is inactive - the rules are saved but port $port is open to everyone."
-    echo "         Allow SSH first, then turn it on: sudo ufw allow OpenSSH && sudo ufw enable"
-  fi
-else
-  echo "WARNING: ufw is not installed, so nothing on this host filters port $port."
-  echo "         Remote logins still need TLS + password$([[ "$client_cert" == yes ]] && echo " + client certificate")."
-fi
 
 # ── Start ─────────────────────────────────────────────────────────────────────
 echo "==> Starting PostgreSQL"
@@ -387,33 +414,74 @@ for _ in $(seq 1 60); do
   sleep 3
 done
 echo ""
-[[ "$status" == healthy ]] || _die "PostgreSQL did not become healthy. Check: cd $INSTALL_DIR && docker compose logs postgres"
+[[ "$status" == healthy ]] || _die "PostgreSQL did not become healthy."
+
+# ── From here on nothing aborts ───────────────────────────────────────────────
+# PostgreSQL is up. Each step below warns and carries on, and the warnings are
+# repeated at the end with the command that finishes the job.
+BUILDING=false
 
 # The remote path end to end - TLS, the server certificate checked against the
 # domain, the client certificate and the password - from this host's outward
-# address, which pg_hba treats like any remote client.
+# address, which pg_hba treats like any remote client. Traffic to the host's
+# own address goes over loopback, so it does not depend on the ufw rules.
 host_ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1; i<NF; i++) if ($i == "src") {print $(i+1); exit}}' || true)"
-if [[ -n "$host_ip" ]]; then
-  if out="$(PGPASSWORD="$password" docker run --rm --network host -e PGPASSWORD --user "$(id -u):$(id -g)" \
-      -v "$INSTALL_DIR/clients/postgres:/client:ro" "$image" psql -X -At \
-      "host=$domain hostaddr=$host_ip port=$port dbname=postgres user=postgres sslmode=verify-full sslrootcert=/client/ca.crt sslcert=/client/client.crt sslkey=/client/client.key" \
-      -c 'SELECT version FROM pg_stat_ssl WHERE pid = pg_backend_pid()' 2>&1)"; then
-    echo "==> Remote login check passed ($out, certificate verified for $domain)"
-  else
-    echo "WARNING: the remote login check against $host_ip failed:"
-    echo "$out" | sed 's/^/         /'
+if [[ -z "$host_ip" ]]; then
+  _warn "could not find this host's outward IP, so the remote login check was skipped."
+elif out="$(PGPASSWORD="$password" docker run --rm --network host -e PGPASSWORD --user "$(id -u):$(id -g)" \
+    -v "$INSTALL_DIR/clients/postgres:/client:ro" "$image" psql -X -At \
+    "host=$domain hostaddr=$host_ip port=$port dbname=postgres user=postgres sslmode=verify-full sslrootcert=/client/ca.crt sslcert=/client/client.crt sslkey=/client/client.key" \
+    -c 'SELECT version FROM pg_stat_ssl WHERE pid = pg_backend_pid()' 2>&1)"; then
+  echo "==> Remote login check passed ($out, certificate verified for $domain)"
+else
+  echo "$out" | sed 's/^/    /'
+  _warn "the remote login check against $host_ip failed (output above)."
+fi
+
+# ── Firewall ──────────────────────────────────────────────────────────────────
+_ufw() {
+  local cmd
+  printf -v cmd '%q ' "$@"
+  sudo ufw "$@" || _warn "ufw did not take a rule. Add it with: sudo ufw ${cmd% }"
+}
+echo "==> ufw rules for port $port"
+if command -v ufw >/dev/null 2>&1; then
+  _ufw allow in on "$iface" from "$subnet" to any port "$port" proto tcp comment "postgres $domain - docker apps"
+  for src in $remote; do
+    if [[ "$src" == any ]]; then
+      _ufw allow "$port/tcp" comment "postgres $domain - remote"
+    else
+      _ufw allow from "$src" to any port "$port" proto tcp comment "postgres $domain - remote"
+    fi
+  done
+  if ! sudo ufw status | grep -q '^Status: active'; then
+    _warn "ufw is inactive - the rules are saved but port $port is open to everyone. Allow SSH first, then turn it on: sudo ufw allow OpenSSH && sudo ufw enable"
   fi
+else
+  _warn "ufw is not installed, so nothing on this host filters port $port. Remote logins still need TLS + password$([[ "$client_cert" == yes ]] && echo " + client certificate")."
 fi
 
 # ── Nightly backup ────────────────────────────────────────────────────────────
-echo ""
-read -rp "Add a nightly backup (02:30, keeps 7) to your crontab? [Y/n] " ans
-if [[ ! "$ans" =~ ^[Nn]$ ]]; then
-  [ -d "$DEFAULT_BACKUP_ROOT" ] || sudo install -d -m 750 -o "$(id -u)" -g "$(id -g)" "$DEFAULT_BACKUP_ROOT"
-  [ -w "$DEFAULT_BACKUP_ROOT" ] || echo "WARNING: $DEFAULT_BACKUP_ROOT is not writable by $(id -un) - the job will fail until it is."
-  line="30 2 * * * POSTGRES_BACKUP_ROOT=$DEFAULT_BACKUP_ROOT POSTGRES_INSTANCE_DIR=$INSTALL_DIR $SCRIPT_DIR/postgres-docker-backup.sh >> $HOME/postgres-backup.log 2>&1"
-  { crontab -l 2>/dev/null | grep -vF "POSTGRES_INSTANCE_DIR=$INSTALL_DIR " || true; echo "$line"; } | crontab -
-  echo "==> Scheduled. Log: $HOME/postgres-backup.log"
+cron_line="30 2 * * * POSTGRES_BACKUP_ROOT=$DEFAULT_BACKUP_ROOT POSTGRES_INSTANCE_DIR=$INSTALL_DIR $SCRIPT_DIR/postgres-docker-backup.sh >> $HOME/postgres-backup.log 2>&1"
+# Called from an if, so a failing step returns instead of ending the script.
+_schedule() {
+  if ! command -v crontab >/dev/null 2>&1; then
+    command -v apt-get >/dev/null 2>&1 || { echo "cron is not installed."; return 1; }
+    echo "==> Installing cron"
+    { sudo apt-get update -qq && sudo apt-get install -y -qq cron; } >/dev/null || return 1
+  fi
+  if [ ! -d "$DEFAULT_BACKUP_ROOT" ]; then
+    sudo install -d -m 750 -o "$(id -u)" -g "$(id -g)" "$DEFAULT_BACKUP_ROOT" || return 1
+  fi
+  [ -w "$DEFAULT_BACKUP_ROOT" ] || _warn "$DEFAULT_BACKUP_ROOT is not writable by $(id -un) - the nightly backup fails until it is."
+  { crontab -l 2>/dev/null | grep -vF "POSTGRES_INSTANCE_DIR=$INSTALL_DIR " || true; echo "$cron_line"; } | crontab -
+}
+if [[ "$backup" == yes ]]; then
+  if _schedule; then
+    echo "==> Nightly backup scheduled. Log: $HOME/postgres-backup.log"
+  else
+    _warn "the nightly backup is not scheduled. Install cron, then add this line with 'crontab -e':"$'\n'"$cron_line"
+  fi
 fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────
@@ -438,5 +506,10 @@ if [[ "$MODE" == 2 ]]; then
   echo ""
   echo "    The database is still empty. Bring the data back with"
   echo "    postgres-docker-restore.sh, option 2 (roles + every database)."
+fi
+if [ ${#WARN[@]} -gt 0 ]; then
+  echo ""
+  echo "    Needs your attention:"
+  for w in "${WARN[@]}"; do echo "      - ${w//$'\n'/$'\n'        }"; done
 fi
 echo ""

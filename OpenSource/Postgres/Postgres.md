@@ -90,6 +90,11 @@ Prompts (press Enter to accept the default):
 - **Require a client certificate**: default yes.
 - **Docker network / subnet**: default `postgres` / `10.254.254.0/24`. An
   existing network with that name is reused.
+- **Nightly backup**: default yes (02:30 to `/home/backup`, keeps 7). If `cron`
+  is missing, it is installed with `apt-get`.
+
+Every question comes before the summary. After you confirm it, the script
+runs to the end without asking anything else.
 
 What it does:
 
@@ -99,13 +104,21 @@ What it does:
 3. Writes `conf/pg_hba.conf` and `.env`
 4. Pulls the image and gives `server.key` to root:postgres `640` (Postgres
    refuses a key it can't trust)
-5. Adds the ufw rules: the Docker bridge, plus each allowed source. It
+5. Starts Postgres and waits for it to report healthy
+6. **Checks a real remote login**: from the host's outward-facing IP, using the
+   `postgres` client bundle and `sslmode=verify-full` against the domain
+7. Adds the ufw rules: the Docker bridge, plus each allowed source. It
    **does not enable ufw**. If ufw is inactive it warns you; allow SSH before
    you enable it.
-6. Starts Postgres and waits for it to report healthy
-7. **Checks a real remote login**: from the host's outward-facing IP, using the
-   `postgres` client bundle and `sslmode=verify-full` against the domain
-8. Offers to add a nightly backup to your crontab (02:30, keeps 7)
+8. Schedules the nightly backup in your crontab
+
+**If something fails:**
+- **Before Postgres is healthy (steps 1-5):** the script prints the last log
+  lines. It then removes the directory, the container, the volume, and the
+  network if this run created it. Fix the cause and run it again.
+- **After that (steps 6-8):** nothing aborts. A step that fails prints a
+  warning and the script carries on. The warnings are listed again at the
+  end, each with the command that finishes the job.
 
 The superuser password is generated and printed. It's stored in `.env`.
 
